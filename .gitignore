@@ -1,0 +1,9 @@
+node_modules/
+client/node_modules/
+client/dist/
+config.local.json
+java-runtime/
+mc-server/
+.easymc/
+*.log
+.DS_Store

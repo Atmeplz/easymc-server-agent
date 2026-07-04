@@ -1,0 +1,180 @@
+/*
+ * AI maintenance note: Keep all code comments in English.
+ */
+/* xterm.js styles */
+@import '@xterm/xterm/css/xterm.css';
+
+/* Roboto font (SIL OFL 1.1) */
+@font-face {
+  font-family: 'Roboto';
+  src: url('/fonts/Roboto-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto';
+  src: url('/fonts/Roboto-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto';
+  src: url('/fonts/Roboto-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Roboto';
+  src: url('/fonts/Roboto-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --md-bg: 251 248 255;
+  --md-surface: 242 240 249;
+  --md-surface-variant: 227 225 236;
+  --md-surface-container: 255 255 255;
+  --md-surface-container-high: 239 237 246;
+  --md-primary: 79 95 159;
+  --md-on-primary: 255 255 255;
+  --md-primary-container: 221 225 255;
+  --md-on-primary-container: 27 27 33;
+  --md-secondary: 91 93 114;
+  --md-secondary-container: 224 225 249;
+  --md-on-secondary-container: 24 26 44;
+  --md-outline: 118 118 128;
+  --md-success: 60 113 72;
+  --md-success-container: 221 245 223;
+  --md-warning: 132 93 0;
+  --md-warning-container: 255 226 180;
+  --md-error: 186 26 26;
+  --md-error-container: 255 218 214;
+  --md-terminal: 28 27 31;
+  --md-theme-icon: 255 255 255;
+  --md-on-theme-icon: 164 201 235;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --md-bg: 18 19 24;
+  --md-surface: 26 27 33;
+  --md-surface-variant: 69 70 79;
+  --md-surface-container: 31 32 39;
+  --md-surface-container-high: 43 44 52;
+  --md-primary: 187 195 255;
+  --md-on-primary: 27 45 111;
+  --md-primary-container: 53 70 130;
+  --md-on-primary-container: 221 225 255;
+  --md-secondary: 196 197 221;
+  --md-secondary-container: 67 70 89;
+  --md-on-secondary-container: 224 225 249;
+  --md-outline: 144 144 154;
+  --md-success: 151 216 159;
+  --md-success-container: 27 76 40;
+  --md-warning: 255 195 92;
+  --md-warning-container: 92 63 0;
+  --md-error: 255 180 171;
+  --md-error-container: 147 0 10;
+  --md-terminal: 13 14 18;
+  --md-theme-icon: 25 72 111;
+  --md-on-theme-icon: 164 201 235;
+}
+
+/* Global styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: rgb(var(--md-bg));
+  color: rgb(var(--md-on-primary-container));
+  font-family: 'Roboto', system-ui, -apple-system, sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--md-primary));
+  outline-offset: 2px;
+}
+
+.chat-input-field:focus,
+.chat-input-field:focus-visible,
+main input[placeholder="Ask me something ..."]:focus,
+main input[placeholder="Ask me something ..."]:focus-visible {
+  outline: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgb(var(--md-surface));
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--md-surface-variant));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--md-primary));
+}
+
+/* xterm container */
+.xterm {
+  padding: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgb(var(--md-primary-container));
+  border-radius: 3px;
+}
+
+/* Chat message animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-message {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(85, 255, 85, 0.3); }
+  50% { box-shadow: 0 0 15px rgba(85, 255, 85, 0.6); }
+}
+
+.status-online {
+  animation: pulse-glow 2s infinite;
+}
+
+.material-page {
+  animation: materialPageIn 0.22s ease-out;
+}
+
+@keyframes materialPageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
