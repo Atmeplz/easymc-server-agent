@@ -302,7 +302,7 @@ export default function App() {
   const [setupSaving, setSetupSaving] = useState(false);
   const [setupNotice, setSetupNotice] = useState('');
 
-  const [agentSkills, setAgentSkills] = useState([]);
+  const [agentTools, setAgentTools] = useState([]);
   const [agentPrompts, setAgentPrompts] = useState(null);
   const [terminalEncoding, setTerminalEncoding] = useState('gb2312');
 
@@ -533,13 +533,13 @@ export default function App() {
 
   async function loadAgentData() {
     try {
-      const [skillsRes, promptsRes] = await Promise.all([
-        fetch('/api/agent/skills'),
+      const [toolsRes, promptsRes] = await Promise.all([
+        fetch('/api/agent/tools'),
         fetch('/api/agent/prompts'),
       ]);
-      const skillsData = await skillsRes.json();
+      const toolsData = await toolsRes.json();
       const promptsData = await promptsRes.json();
-      setAgentSkills(skillsData.skills || []);
+      setAgentTools(toolsData.tools || []);
       setAgentPrompts(promptsData);
     } catch (err) {
       console.error('加载 Agent 数据失败:', err);
@@ -630,8 +630,8 @@ export default function App() {
               <SidebarButton activeClass={activeNav('agent-chat')} onClick={() => setPage('agent-chat')} icon={MessageCircle}>
                 Chat
               </SidebarButton>
-              <SidebarButton activeClass={activeNav('agent-skills')} onClick={() => setPage('agent-skills')} icon={Wrench}>
-                Skills
+              <SidebarButton activeClass={activeNav('agent-tools')} onClick={() => setPage('agent-tools')} icon={Wrench}>
+                Tools
               </SidebarButton>
               <SidebarButton activeClass={activeNav('agent-prompts')} onClick={() => setPage('agent-prompts')} icon={SlidersHorizontal}>
                 Prompt
@@ -729,12 +729,12 @@ export default function App() {
             />
           )}
 
-          {page === 'agent-skills' && (
-            <AgentSkillsPage skills={agentSkills} />
+          {page === 'agent-tools' && (
+            <AgentToolsPage tools={agentTools} />
           )}
 
           {page === 'agent-prompts' && (
-            <AgentPromptsPage prompts={agentPrompts} />
+            <AgentPromptsPage prompts={agentPrompts} onPromptsSaved={loadAgentData} />
           )}
 
           {page === 'server-console' && (
@@ -1249,8 +1249,8 @@ function DownloadCenterPage() {
   const [type, setType] = useState('Mods');
   const [source, setSource] = useState('All');
   const [sources, setSources] = useState([]);
-  const [resources, setResources] = useState(DOWNLOAD_RESOURCES);
-  const [selectedId, setSelectedId] = useState(DOWNLOAD_RESOURCES[0]?.id);
+  const [resources, setResources] = useState([]);
+  const [selectedId, setSelectedId] = useState('');
   const [files, setFiles] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState('');
   const [queue, setQueue] = useState([]);
@@ -1259,15 +1259,27 @@ function DownloadCenterPage() {
   const [installing, setInstalling] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState('');
 
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
+  const [searchLoaded, setSearchLoaded] = useState(false);
+  const backendConnected = sources.some(item => item.enabled);
+  const catalogReady = sourcesLoaded && searchLoaded;
+
   useEffect(() => {
     let cancelled = false;
+    setSourcesLoaded(false);
     fetch('/api/download/sources')
       .then(response => response.json())
       .then(data => {
-        if (!cancelled) setSources(data.sources || []);
+        if (!cancelled) {
+          setSources(data.sources || []);
+          setSourcesLoaded(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setSources([]);
+        if (!cancelled) {
+          setSources([]);
+          setSourcesLoaded(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -1293,11 +1305,13 @@ function DownloadCenterPage() {
         if (data.errors?.length) setDownloadNotice(data.errors.join(' | '));
       } catch (err) {
         if (err.name !== 'AbortError') {
-          setResources(DOWNLOAD_RESOURCES);
-          setDownloadNotice(`Using local samples: ${err.message}`);
+          setDownloadNotice(`Download search unavailable: ${err.message}`);
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setSearchLoaded(true);
+        }
       }
     }, 250);
 
@@ -1447,7 +1461,7 @@ function DownloadCenterPage() {
       title="Download"
       action={
         <div className="rounded-full bg-md-primaryContainer/65 px-4 py-2 text-xs font-bold text-md-onPrimaryContainer flex items-center gap-2">
-          <CheckCircle size={15} /> {sources.some(item => item.enabled) ? 'Backend connected' : 'Static preview'}
+          <CheckCircle size={15} /> {backendConnected ? 'Backend connected' : 'Connecting...'}
         </div>
       }
     >
@@ -1493,7 +1507,9 @@ function DownloadCenterPage() {
           <div className="rounded-[20px] bg-md-primaryContainer/45 px-4 py-3">
             <p className="text-sm font-bold text-md-onPrimaryContainer">Resource catalog</p>
             <p className="text-xs text-md-outline mt-1 leading-relaxed">
-              Search uses the backend when available. Local samples are shown only when the backend or network source is unavailable.
+              {backendConnected
+                ? 'Backend connected. Search results come from live download sources.'
+                : 'Waiting for backend connection to load the resource catalog.'}
             </p>
           </div>
 
@@ -1521,10 +1537,16 @@ function DownloadCenterPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-            {filteredResources.length === 0 ? (
+            {!catalogReady || loading ? (
+              <div className="h-full rounded-[24px] border border-dashed border-md-surfaceVariant bg-md-surfaceContainer flex flex-col items-center justify-center text-center p-8">
+                <Loader2 size={36} className="text-md-primary animate-spin mb-3" />
+                <h3 className="text-lg font-bold">Loading resources</h3>
+                <p className="text-sm text-md-outline mt-1">Please wait while the catalog is fetched.</p>
+              </div>
+            ) : filteredResources.length === 0 ? (
               <div className="h-full rounded-[24px] border border-dashed border-md-surfaceVariant bg-md-surfaceContainer flex flex-col items-center justify-center text-center p-8">
                 <Download size={34} className="text-md-outline mb-3" />
-                <h3 className="text-lg font-bold">No sample resources found</h3>
+                <h3 className="text-lg font-bold">No resources found</h3>
                 <p className="text-sm text-md-outline mt-1">Try another type, All sources, or a shorter search term.</p>
               </div>
             ) : (
@@ -2197,25 +2219,25 @@ function SetupRow({ label, hint, value, onChange, type = 'text' }) {
   );
 }
 
-function AgentSkillsPage({ skills }) {
+function AgentToolsPage({ tools }) {
   const [expanded, setExpanded] = useState(null);
   const toggle = (name) => setExpanded(expanded === name ? null : name);
 
   return (
-    <PageShell title="Agent Skills">
+    <PageShell title="Agent Tools">
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-        {skills.length === 0 ? (
+        {tools.length === 0 ? (
           <div className="rounded-[24px] bg-md-surfaceContainer border border-dashed border-md-surfaceVariant p-8 flex flex-col items-center text-center shadow-sm">
             <Wrench size={32} className="text-md-outline mb-3" />
-            <h3 className="font-bold text-lg mb-1">暂无技能数据</h3>
+            <h3 className="font-bold text-lg mb-1">暂无工具数据</h3>
             <p className="text-sm text-md-outline">Agent 工具定义尚未加载，请检查后端服务。</p>
           </div>
         ) : (
-          skills.map(skill => (
+          tools.map(tool => (
             <div
-              key={skill.name}
+              key={tool.name}
               className="rounded-[24px] bg-md-surfaceContainer border border-md-surfaceVariant p-5 shadow-sm cursor-pointer hover:border-md-primary/40 transition"
-              onClick={() => toggle(skill.name)}
+              onClick={() => toggle(tool.name)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
@@ -2223,20 +2245,20 @@ function AgentSkillsPage({ skills }) {
                     <Wrench size={18} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-bold text-sm truncate">{skill.name}</h3>
-                    <p className="text-xs text-md-outline mt-0.5 line-clamp-2">{skill.description}</p>
+                    <h3 className="font-bold text-sm truncate">{tool.name}</h3>
+                    <p className="text-xs text-md-outline mt-0.5 line-clamp-2">{tool.description}</p>
                   </div>
                 </div>
                 <ChevronRight
                   size={18}
-                  className={`text-md-outline shrink-0 transition-transform ${expanded === skill.name ? 'rotate-90' : ''}`}
+                  className={`text-md-outline shrink-0 transition-transform ${expanded === tool.name ? 'rotate-90' : ''}`}
                 />
               </div>
-              {expanded === skill.name && skill.parameters?.properties && (
+              {expanded === tool.name && tool.parameters?.properties && (
                 <div className="mt-4 pt-3 border-t border-md-surfaceVariant/60">
                   <p className="text-xs font-bold text-md-outline mb-2">参数</p>
                   <div className="space-y-2">
-                    {Object.entries(skill.parameters.properties).map(([key, def]) => (
+                    {Object.entries(tool.parameters.properties).map(([key, def]) => (
                       <div key={key} className="flex items-start gap-2 text-xs">
                         <code className="bg-md-primaryContainer/60 text-md-onPrimaryContainer px-1.5 py-0.5 rounded font-mono shrink-0">
                           {key}
@@ -2247,7 +2269,7 @@ function AgentSkillsPage({ skills }) {
                             {def.enum.join(', ')}
                           </span>
                         )}
-                        {skill.parameters.required?.includes(key) && (
+                        {tool.parameters.required?.includes(key) && (
                           <span className="text-md-error font-bold shrink-0">*</span>
                         )}
                       </div>
@@ -2263,8 +2285,12 @@ function AgentSkillsPage({ skills }) {
   );
 }
 
-function AgentPromptsPage({ prompts }) {
+function AgentPromptsPage({ prompts, onPromptsSaved }) {
   const [activeTab, setActiveTab] = useState('admin');
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   if (!prompts) {
     return (
@@ -2277,6 +2303,47 @@ function AgentPromptsPage({ prompts }) {
   }
 
   const currentPrompt = activeTab === 'admin' ? prompts.prompts?.admin : prompts.prompts?.player;
+
+  const handleEditClick = () => {
+    setDraft(currentPrompt || '');
+    setShowConfirm(true);
+  };
+
+  const handleConfirm = () => {
+    setShowConfirm(false);
+    setIsEditing(true);
+  };
+
+  const handleCancel = () => {
+    setShowConfirm(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload = activeTab === 'admin'
+        ? { admin: draft }
+        : { player: draft };
+      const response = await fetch('/api/agent/prompts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
+      setIsEditing(false);
+      onPromptsSaved?.();
+    } catch (err) {
+      alert(`保存失败: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDiscard = () => {
+    setIsEditing(false);
+    setDraft('');
+  };
 
   return (
     <PageShell title="Prompt Settings">
@@ -2291,7 +2358,10 @@ function AgentPromptsPage({ prompts }) {
 
         <div className="flex gap-2">
           <button
-            onClick={() => setActiveTab('admin')}
+            onClick={() => {
+              setActiveTab('admin');
+              setIsEditing(false);
+            }}
             className={`rounded-full px-4 py-2 text-sm font-bold transition ${
               activeTab === 'admin'
                 ? 'bg-md-primary text-md-onPrimary shadow-sm'
@@ -2301,7 +2371,10 @@ function AgentPromptsPage({ prompts }) {
             管理员 Prompt
           </button>
           <button
-            onClick={() => setActiveTab('player')}
+            onClick={() => {
+              setActiveTab('player');
+              setIsEditing(false);
+            }}
             className={`rounded-full px-4 py-2 text-sm font-bold transition ${
               activeTab === 'player'
                 ? 'bg-md-primary text-md-onPrimary shadow-sm'
@@ -2317,13 +2390,75 @@ function AgentPromptsPage({ prompts }) {
             <span className="text-xs font-bold text-md-outline">
               {activeTab === 'admin' ? '管理员系统提示词（Web 端完全权限）' : '玩家系统提示词（游戏内 @agent，受限权限）'}
             </span>
-            <span className="text-[10px] text-md-outline bg-md-surfaceVariant px-2 py-0.5 rounded-full">只读</span>
+            {isEditing ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDiscard}
+                  disabled={saving}
+                  className="rounded-full px-3 py-1.5 text-[11px] font-bold bg-md-surfaceVariant text-md-outline hover:bg-md-surfaceVariant/80 transition"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-full px-3 py-1.5 text-[11px] font-bold bg-md-success text-white hover:opacity-90 transition flex items-center gap-1"
+                >
+                  {saving && <Loader2 size={12} className="animate-spin" />}
+                  保存
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleEditClick}
+                className="rounded-full px-3 py-1.5 text-[11px] font-bold bg-md-primaryContainer text-md-onPrimaryContainer hover:bg-md-primaryContainer/80 transition"
+              >
+                修改
+              </button>
+            )}
           </div>
-          <pre className="p-5 text-sm leading-relaxed text-md-onPrimaryContainer whitespace-pre-wrap font-sans overflow-x-auto bg-md-bg/50 max-h-[60vh]">
-            {currentPrompt || '暂无内容'}
-          </pre>
+          {isEditing ? (
+            <textarea
+              value={draft}
+              onChange={event => setDraft(event.target.value)}
+              className="w-full p-5 text-sm leading-relaxed text-md-onPrimaryContainer whitespace-pre-wrap bg-md-bg/50 max-h-[60vh] min-h-[300px] outline-none resize-y font-sans"
+              spellCheck={false}
+            />
+          ) : (
+            <pre className="p-5 text-sm leading-relaxed text-md-onPrimaryContainer whitespace-pre-wrap font-sans overflow-x-auto bg-md-bg/50 max-h-[60vh]">
+              {currentPrompt || '暂无内容'}
+            </pre>
+          )}
         </div>
       </div>
+
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-md-scrim/50 p-4">
+          <div className="rounded-[28px] bg-md-surfaceContainer border border-md-surfaceVariant shadow-lg max-w-sm w-full p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={22} className="text-md-warning shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-base font-bold">不建议修改</h3>
+                <p className="text-sm text-md-outline mt-1">提示词直接影响 Agent 行为，修改后可能导致意外结果。真的要修改吗？</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={handleCancel}
+                className="rounded-full px-4 py-2 text-sm font-bold bg-md-surfaceVariant text-md-outline hover:bg-md-surfaceVariant/80 transition"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirm}
+                className="rounded-full px-4 py-2 text-sm font-bold bg-md-primary text-md-onPrimary hover:opacity-90 transition"
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageShell>
   );
 }

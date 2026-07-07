@@ -44,6 +44,11 @@ module.exports = {
     chatRegex: '^<(\\w{1,16})>\\s+(.+)',
   },
 
+  prompts: {
+    admin: '',
+    player: '',
+  },
+
   deploy: {
     preferredMirror: 'auto',
     downloadTimeout: 30000,

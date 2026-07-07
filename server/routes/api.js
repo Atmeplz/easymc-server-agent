@@ -94,23 +94,41 @@ module.exports = function ({
     res.json({ files });
   });
 
-  router.get('/agent/skills', (req, res) => {
-    const skills = getToolDefinitions().map(tool => ({
+  router.get('/agent/tools', (req, res) => {
+    const tools = getToolDefinitions().map(tool => ({
       name: tool.function.name,
       description: tool.function.description,
       parameters: tool.function.parameters || {},
     }));
-    res.json({ skills });
+    res.json({ tools });
   });
 
   router.get('/agent/prompts', (req, res) => {
     res.json({
       prompts: {
         admin: getAdminPrompt(config),
-        player: getPlayerPrompt('{playerName}', '{permissionLevel}', '{permissionDescription}'),
+        player: getPlayerPrompt('{playerName}', '{permissionLevel}', '{permissionDescription}', config),
       },
       notice: '不建议修改',
     });
+  });
+
+  router.post('/agent/prompts', (req, res) => {
+    try {
+      const { admin, player } = req.body || {};
+      if (!config.prompts) config.prompts = { admin: '', player: '' };
+      if (typeof admin === 'string') config.prompts.admin = admin;
+      if (typeof player === 'string') config.prompts.player = player;
+
+      const localPath = path.join(process.cwd(), 'config.local.json');
+      fs.writeFileSync(localPath, JSON.stringify(config, null, 2), 'utf-8');
+
+      console.log('[API] Prompts 已保存');
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[API] Prompts 保存失败:', err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // Whether the server has been deployed.

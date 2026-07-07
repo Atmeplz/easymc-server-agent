@@ -202,7 +202,7 @@ class AgentCore {
     }
 
     const messages = [
-      { role: 'system', content: getPlayerPrompt(playerName, permission.level, permission.description) },
+      { role: 'system', content: getPlayerPrompt(playerName, permission.level, permission.description, this.config) },
       { role: 'user', content: request },
     ];
 

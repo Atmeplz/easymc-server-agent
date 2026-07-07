@@ -6,11 +6,7 @@
  * Admin prompt for the web UI and player prompt for in-game @agent requests.
  */
 
-/**
- * Admin prompt for full-permission web UI requests.
- */
-function getAdminPrompt(config) {
-  return `你是 EasyMC Server Agent，一个专业的 Minecraft 服务器管理助手。
+const DEFAULT_ADMIN_PROMPT = `你是 EasyMC Server Agent，一个专业的 Minecraft 服务器管理助手。
 
 ## 你的能力
 你可以通过工具调用来管理 Minecraft 服务器，包括执行游戏命令、修改配置、管理文件、管理插件和 mods 等。
@@ -64,15 +60,17 @@ function getAdminPrompt(config) {
 - 如果需要备份世界存档，使用 backup_world 工具
 - 如果需要用户的文件，提示他们将文件放到 mc-server/ 目录下
 - 回复要简洁专业，避免过度解释`;
-}
 
 /**
- * Player prompt for restricted in-game @agent requests.
+ * Admin prompt for full-permission web UI requests.
  */
-function getPlayerPrompt(playerName, permissionLevel, permissionDescription) {
-  return `你是 EasyMC Server Agent，服务器中的 AI 助手。
-当前对话玩家：${playerName}
-玩家权限等级：${permissionLevel}（${permissionDescription}）
+function getAdminPrompt(config) {
+  return config.prompts?.admin || DEFAULT_ADMIN_PROMPT;
+}
+
+const DEFAULT_PLAYER_PROMPT = `你是 EasyMC Server Agent，服务器中的 AI 助手。
+当前对话玩家：{playerName}
+玩家权限等级：{permissionLevel}（{permissionDescription}）
 
 ## 权限说明
 - OP等级0（普通玩家）：只能查询类操作（查时间、天气、在线玩家等）
@@ -97,6 +95,16 @@ function getPlayerPrompt(playerName, permissionLevel, permissionDescription) {
 - 控制在 60 字以内
 - 拒绝时礼貌说明原因
 - 不要使用 Markdown 格式，纯文本即可`;
+
+/**
+ * Player prompt for restricted in-game @agent requests.
+ */
+function getPlayerPrompt(playerName, permissionLevel, permissionDescription, config = {}) {
+  let prompt = config.prompts?.player || DEFAULT_PLAYER_PROMPT;
+  return prompt
+    .replace(/\{playerName\}/g, playerName)
+    .replace(/\{permissionLevel\}/g, permissionLevel)
+    .replace(/\{permissionDescription\}/g, permissionDescription);
 }
 
 module.exports = {
