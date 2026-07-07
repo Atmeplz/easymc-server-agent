@@ -10,6 +10,7 @@ const fs = require('fs');
 const { getAdminPrompt, getPlayerPrompt } = require('../agent/prompts');
 const { getToolDefinitions } = require('../agent/tools');
 const DownloadService = require('../download/download-service');
+const CoreDetector = require('../managers/core-detector');
 
 module.exports = function ({
   config,
@@ -25,6 +26,7 @@ module.exports = function ({
 }) {
   const router = express.Router();
   const downloadService = providedDownloadService || new DownloadService({ config, deployManager, modManager, pluginManager });
+  const coreDetector = new CoreDetector(config);
 
   // Return configuration with sensitive values masked.
   router.get('/config', (req, res) => {
@@ -51,6 +53,10 @@ module.exports = function ({
       if (updates.mc) {
         if (updates.mc.serverDir !== undefined) config.mc.serverDir = updates.mc.serverDir;
         if (updates.mc.jvmArgs !== undefined) config.mc.jvmArgs = updates.mc.jvmArgs;
+        if (updates.mc.javaPath !== undefined) {
+          if (!config.java) config.java = {};
+          config.java.customPath = updates.mc.javaPath;
+        }
       }
 
       // Persist to config.local.json.
@@ -176,6 +182,8 @@ module.exports = function ({
         return;
       }
 
+      coreDetector.invalidateCache();
+
       let lines = fs.existsSync(check.resolvedPath)
         ? fs.readFileSync(check.resolvedPath, 'utf-8').split(/\r?\n/)
         : [];
@@ -195,6 +203,57 @@ module.exports = function ({
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.get('/server/core', async (req, res) => {
+    try {
+      const info = await coreDetector.detect();
+      res.json(info);
+    } catch (err) {
+      res.status(500).json({ name: 'unknown', version: 'unknown', supportsMods: false, supportsPlugins: false, error: err.message });
+    }
+  });
+
+  router.post('/server/core/jar', async (req, res) => {
+    try {
+      const { fileName, fileData } = req.body || {};
+      if (!fileName || !fileData) {
+        res.status(400).json({ success: false, error: 'Missing fileName or fileData.' });
+        return;
+      }
+
+      const jarPath = path.join(path.resolve(config.mc.serverDir), config.mc.jarFile || 'server.jar');
+      const check = fileGuard.validate(jarPath, 'write');
+      if (!check.allowed) {
+        res.status(403).json({ success: false, error: check.reason });
+        return;
+      }
+
+      // Backup the existing jar if present.
+      if (fs.existsSync(check.resolvedPath)) {
+        const backupPath = `${check.resolvedPath}.backup.${Date.now()}`;
+        fs.renameSync(check.resolvedPath, backupPath);
+      }
+
+      fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
+      fs.writeFileSync(check.resolvedPath, Buffer.from(fileData, 'base64'));
+      coreDetector.invalidateCache();
+
+      res.json({ success: true, jarPath: check.resolvedPath });
+    } catch (err) {
+      console.error('[API] Jar replacement failed:', err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.get('/java/scan', async (req, res) => {
+    try {
+      const javas = await javaManager.scanForJavas();
+      res.json({ javas });
+    } catch (err) {
+      console.error('[API] Java scan failed:', err.message);
+      res.status(500).json({ javas: [], error: err.message });
     }
   });
 

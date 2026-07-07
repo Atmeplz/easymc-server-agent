@@ -261,6 +261,120 @@ class JavaManager {
     const m = versionStr.match(/version "?(\d+)/);
     return m ? `Java ${m[1]}` : versionStr;
   }
+
+  /**
+   * Scan common directories for Java installations.
+   */
+  async scanForJavas() {
+    const candidates = new Map();
+
+    // Add already detected Java entries.
+    for (const j of this.detectedJavas) {
+      candidates.set(path.normalize(j.path), j);
+    }
+
+    const scanPaths = [];
+
+    if (process.platform === 'win32') {
+      const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+      const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+      scanPaths.push(
+        path.join(programFiles, 'Java'),
+        path.join(programFilesX86, 'Java'),
+        path.join(programFiles, 'Eclipse Adoptium'),
+        path.join(programFiles, 'Microsoft'),
+        path.join(programFilesX86, 'Microsoft'),
+        path.join(programFiles, 'Amazon Corretto'),
+        path.join(programFiles, 'Zulu'),
+        path.join(programFiles, 'AdoptOpenJDK'),
+        path.join(programFiles, 'Eclipse Foundation'),
+      );
+
+      // Search PATH for all java.exe occurrences.
+      try {
+        const whereOutput = execSync('where java', { encoding: 'utf-8', timeout: 5000 }).trim();
+        for (const line of whereOutput.split(/\r?\n/)) {
+          const p = line.trim();
+          if (p) scanPaths.push(p);
+        }
+      } catch {
+        // ignore
+      }
+    } else if (process.platform === 'darwin') {
+      scanPaths.push('/Library/Java/JavaVirtualMachines', '/System/Library/Java/JavaVirtualMachines');
+      try {
+        const output = execSync('/usr/libexec/java_home -V 2>&1', { encoding: 'utf-8', timeout: 5000 });
+        for (const line of output.split(/\r?\n/)) {
+          const m = line.match(/\s+\d+\.\d+\.\d+.*?\s+(\/.*)$/);
+          if (m) scanPaths.push(path.join(m[1], 'Contents', 'Home', 'bin', 'java'));
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      scanPaths.push('/usr/lib/jvm', '/usr/java', '/opt');
+      try {
+        const output = execSync('which -a java 2>/dev/null || true', { encoding: 'utf-8', timeout: 5000 }).trim();
+        for (const line of output.split(/\r?\n/)) {
+          const p = line.trim();
+          if (p) scanPaths.push(p);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    for (const entry of scanPaths) {
+      const resolved = path.resolve(entry);
+      if (fs.existsSync(resolved)) {
+        const stat = fs.statSync(resolved);
+        if (stat.isDirectory()) {
+          this._scanJavaDirectory(resolved, candidates);
+        } else if (stat.isFile() && /java(\.exe)?$/i.test(resolved)) {
+          await this._addJavaCandidate(resolved, candidates, 'scan');
+        }
+      }
+    }
+
+    return Array.from(candidates.values());
+  }
+
+  _scanJavaDirectory(dir, candidates) {
+    if (!fs.existsSync(dir)) return;
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const stat = fs.statSync(full);
+      if (stat.isDirectory()) {
+        // Look for bin/java inside this directory (one level deep).
+        const javaExe = path.join(full, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+        if (fs.existsSync(javaExe)) {
+          this._addJavaCandidate(javaExe, candidates, 'scan');
+        } else {
+          // One more level.
+          for (const sub of fs.readdirSync(full)) {
+            const subFull = path.join(full, sub);
+            if (fs.statSync(subFull).isDirectory()) {
+              const subJava = path.join(subFull, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+              if (fs.existsSync(subJava)) {
+                this._addJavaCandidate(subJava, candidates, 'scan');
+              }
+            }
+          }
+        }
+      } else if (stat.isFile() && /java(\.exe)?$/i.test(full)) {
+        this._addJavaCandidate(full, candidates, 'scan');
+      }
+    }
+  }
+
+  async _addJavaCandidate(javaPath, candidates, source) {
+    const normalized = path.normalize(javaPath);
+    if (candidates.has(normalized)) return;
+    const info = await this.checkJavaAt(normalized);
+    if (info) {
+      candidates.set(normalized, { ...info, source });
+    }
+  }
 }
 
 module.exports = JavaManager;
