@@ -1,0 +1,12 @@
+node_modules/
+client/node_modules/
+client/dist/
+config.local.json
+java-runtime/
+mc-server/
+OUTPUT_TO_GITHUB/
+UI_DESIGN_DRAFT_DONT_READ_WITHOUT_PERMISSION/
+.easymc/
+*.log
+.DS_Store
+.git/
