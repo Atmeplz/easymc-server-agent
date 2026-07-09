@@ -4,8 +4,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-console.log('[useSocket] Module loaded, io type:', typeof io);
-
 // Create the socket eagerly so tree-shaking does not remove it.
 const socket = io(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000', {
   transports: ['websocket', 'polling'],
@@ -13,8 +11,6 @@ const socket = io(typeof window !== 'undefined' ? window.location.origin : 'http
   reconnectionDelay: 1000,
   reconnectionAttempts: 10,
 });
-
-console.log('[useSocket] Socket created:', !!socket);
 
 export function getSocket() {
   return socket;

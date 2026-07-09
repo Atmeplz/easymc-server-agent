@@ -287,6 +287,18 @@ class AgentCore {
               continue;
             }
 
+            if (funcName === 'broadcast_reply') {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  success: false,
+                  error: 'Player chat is already broadcast by the server. Do not call broadcast_reply.',
+                }),
+              });
+              continue;
+            }
+
             if (['file_manager', 'server_properties'].includes(funcName)) {
               messages.push({
                 role: 'tool',
@@ -311,8 +323,9 @@ class AgentCore {
         }
 
         let reply = assistantMessage.content || '';
-        if (reply.length > this.config.agent?.maxResponseLength) {
-          reply = `${reply.slice(0, this.config.agent.maxResponseLength)}...`;
+        const maxLen = this.config.agent?.maxResponseLength || 30;
+        if (reply.length > maxLen) {
+          reply = `${reply.slice(0, maxLen - 3)}...`;
         }
 
         return {

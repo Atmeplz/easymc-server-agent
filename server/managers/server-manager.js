@@ -6,8 +6,12 @@
  * Handles start, stop, status, and stdin communication.
  */
 const { spawn } = require('child_process');
+const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
+
+// Standard ANSI escape sequence regex.
+const ANSI_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
 class ServerManager {
   constructor(config, javaManager, terminalManager) {
@@ -52,21 +56,21 @@ class ServerManager {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    // Handle stdout.
-    this.process.stdout.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        this.terminalManager.addOutput(line);
-        this.detectServerReady(line);
-      }
+    const normalizeLine = (raw) => raw.toString().replace(ANSI_REGEX, '').replace(/\r$/, '');
+
+    // Handle stdout line-by-line for proper encoding and multi-byte safety.
+    const stdoutReader = readline.createInterface({ input: this.process.stdout });
+    stdoutReader.on('line', (raw) => {
+      const line = normalizeLine(raw);
+      this.terminalManager.addOutput(line);
+      this.detectServerReady(line);
     });
 
-    // Handle stderr.
-    this.process.stderr.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        this.terminalManager.addOutput(line);
-      }
+    // Handle stderr line-by-line.
+    const stderrReader = readline.createInterface({ input: this.process.stderr });
+    stderrReader.on('line', (raw) => {
+      const line = normalizeLine(raw);
+      this.terminalManager.addOutput(line);
     });
 
     // Handle process exit.

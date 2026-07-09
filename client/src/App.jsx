@@ -3,8 +3,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useSocket from './hooks/useSocket.js';
+import AgentStreamPage from './components/AgentStreamPage.jsx';
 import {
-  Activity,
   AlertTriangle,
   Bot,
   CheckCircle,
@@ -14,7 +14,6 @@ import {
   Database,
   Download,
   HardDrive,
-  KeyRound,
   Loader2,
   MessageCircle,
   Moon,
@@ -23,6 +22,7 @@ import {
   Plus,
   Power,
   Puzzle,
+  Radio,
   RotateCcw,
   Save,
   Search,
@@ -51,7 +51,6 @@ const SETUP_FIELDS = [
 const PARKED_FEATURES = [
   { title: 'Downloading', desc: '下载队列与历史页。部署、插件、Mod 下载事件之后可统一汇总到这里。', icon: Download },
   { title: 'Workspace Browser', desc: '工作区文件浏览器仍有旧实现，后续可迁入 Material You 列表。', icon: Database },
-  { title: 'Player @agent Activity', desc: '游戏内玩家请求活动流，后续可做为 Agent 子页面展示。', icon: Activity },
 ];
 
 const WELCOME_MESSAGES = [
@@ -280,6 +279,10 @@ export default function App() {
   const [pendingConfirm, setPendingConfirm] = useState(null);
   const [welcomeIndex, setWelcomeIndex] = useState(0);
 
+  const [streamMessages, setStreamMessages] = useState([]);
+  const [streamTyping, setStreamTyping] = useState(false);
+  const streamIdRef = useRef(0);
+
   const [serverStatus, setServerStatus] = useState('stopped');
   const [javaStatus, setJavaStatus] = useState(null);
   const [deployed, setDeployed] = useState(null);
@@ -376,6 +379,34 @@ export default function App() {
         setAgentStopping(false);
         setActiveToolCall(null);
       }),
+      on('agent:player_request', ({ player, request, timestamp }) => {
+        setStreamMessages(prev => {
+          if (prev.length >= 100) return prev;
+          streamIdRef.current += 1;
+          return [...prev.slice(-99), {
+            id: `stream-${streamIdRef.current}`,
+            role: 'player',
+            player,
+            content: request,
+            timestamp: timestamp || Date.now(),
+          }];
+        });
+        setStreamTyping(true);
+      }),
+      on('agent:player_reply', ({ player, reply, timestamp }) => {
+        setStreamMessages(prev => {
+          if (prev.length >= 100) return prev;
+          streamIdRef.current += 1;
+          return [...prev.slice(-99), {
+            id: `stream-${streamIdRef.current}`,
+            role: 'assistant',
+            player,
+            content: reply,
+            timestamp: timestamp || Date.now(),
+          }];
+        });
+        setStreamTyping(false);
+      }),
       on('download:queue', ({ queue: items }) => {
         window.dispatchEvent(new CustomEvent('easymc:download-queue', { detail: items || [] }));
       }),
@@ -430,6 +461,25 @@ export default function App() {
     const timer = window.setTimeout(() => scrollChatToBottom('auto'), 40);
     return () => window.clearTimeout(timer);
   }, [page, mode, activeSession?.id, activeSession?.messages?.length, isTyping]);
+
+  const streamEndRef = useRef(null);
+  const scrollStreamToBottom = (behavior = 'smooth') => {
+    window.requestAnimationFrame(() => {
+      const container = streamEndRef.current?.parentElement;
+      if (container) {
+        container.scrollTo({ top: container.scrollHeight, behavior });
+      } else {
+        streamEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (page !== 'agent-stream') return undefined;
+    scrollStreamToBottom('auto');
+    const timer = window.setTimeout(() => scrollStreamToBottom('auto'), 40);
+    return () => window.clearTimeout(timer);
+  }, [page, mode, streamMessages.length, streamTyping]);
 
   useEffect(() => {
     if (page !== 'server-console') return undefined;
@@ -633,6 +683,9 @@ export default function App() {
               <SidebarButton activeClass={activeNav('agent-chat')} onClick={() => setPage('agent-chat')} icon={MessageCircle}>
                 Chat
               </SidebarButton>
+              <SidebarButton activeClass={activeNav('agent-stream')} onClick={() => setPage('agent-stream')} icon={Radio}>
+                Stream
+              </SidebarButton>
               <SidebarButton activeClass={activeNav('agent-tools')} onClick={() => setPage('agent-tools')} icon={Wrench}>
                 Tools
               </SidebarButton>
@@ -729,6 +782,16 @@ export default function App() {
               agentStopping={agentStopping}
               renameSession={renameSession}
               messagesEndRef={messagesEndRef}
+            />
+          )}
+
+          {page === 'agent-stream' && (
+            <AgentStreamPage
+              messages={streamMessages}
+              isTyping={streamTyping}
+              isRunning={isRunning}
+              connected={connected}
+              streamEndRef={streamEndRef}
             />
           )}
 
@@ -1955,12 +2018,21 @@ function ServerActionButton({ children, icon: Icon, onClick, disabled, tone }) {
 }
 
 function ConsoleLine({ line }) {
+  const isAgentLine = line.includes('@agent') || line.includes('[Agent]');
   const color = line.includes('ERROR') || line.includes('WARN')
     ? 'text-red-300'
     : line.includes('Done') || line.includes('INFO')
       ? 'text-green-300'
       : 'text-gray-300';
-  return <div className={`${color} whitespace-pre-wrap break-words`}>{line}</div>;
+  return (
+    <div
+      className={`${color} whitespace-pre-wrap break-words rounded px-1 -mx-1 ${
+        isAgentLine ? 'bg-md-primary/15 border border-md-primary/30' : ''
+      }`}
+    >
+      {line}
+    </div>
+  );
 }
 
 function InfoTile({ icon: Icon, label, value, tone }) {

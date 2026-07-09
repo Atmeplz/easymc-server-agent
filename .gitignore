@@ -11,3 +11,4 @@ UI_DESIGN_DRAFT_DONT_READ_WITHOUT_PERMISSION/
 .DS_Store
 .claude/
 .git/
+.playwright-mcp/

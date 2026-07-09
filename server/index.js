@@ -83,11 +83,15 @@ const chatMonitor = new ChatMonitor(
 );
 
 chatMonitor.on('agent:player_request', (data) => {
-  io.emit('agent:player_activity', data);
+  io.emit('agent:player_request', data);
 });
 
 chatMonitor.on('agent:player_result', (data) => {
   io.emit('agent:player_result', data);
+});
+
+chatMonitor.on('agent:player_reply', (data) => {
+  io.emit('agent:player_reply', data);
 });
 
 downloadService.queue.on('queued', (item) => {

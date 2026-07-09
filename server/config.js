@@ -32,7 +32,7 @@ module.exports = {
     enabled: true,
     trigger: '@agent',
     replyPrefix: '[Agent]',
-    maxResponseLength: 60,
+    maxResponseLength: 30,
     requireApproval: false,
     approvalTimeout: 30000,
     maxToolRounds: 50,
