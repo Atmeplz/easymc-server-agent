@@ -1,5 +1,40 @@
 # Latest Changelog
 
+> Generated on 2026-07-09
+
+## fix: make in-game @agent chat actually work
+
+### Bug 修复 & 核心功能
+
+- **重写 chat-monitor 解析器**
+  - 剥离 Minecraft 日志前缀，正确检测真实控制台输出中的 `@agent`。
+  - 移除 `[` 跳过逻辑（该逻辑曾导致所有真实 MC 行被忽略）。
+  - 增加 `[Agent]` 广播的自循环防护，避免 Agent 回复触发自身。
+
+- **统一 socket 事件名称**
+  - 后端现在统一使用 `agent:player_request` 事件名，前后端对齐。
+
+- **maxResponseLength 默认值对齐**
+  - 默认值统一为 30，修复截断逻辑确保响应永远不超过限制。
+
+- **屏蔽 broadcast_reply 工具**
+  - 在玩家聊天场景中禁用 `broadcast_reply` 工具，避免双重广播。
+
+- **server-manager stdout/stderr 处理优化**
+  - 使用 readline + ANSI 剥离，实现更健壮的进程输出处理。
+
+### 前端改动
+
+- 提取新的 `AgentStreamPage` 组件，增加连接/离线/最大消息数状态管理。
+- 使用稳定的 ref-based ID 管理流消息，历史消息上限 100 条。
+- 服务器控制台中高亮 `@agent` 和 `[Agent]` 行，提升可读性。
+
+### 清理
+
+- 移除遗留的废弃组件：`AgentActivityPanel`、`ChatPanel`、`TerminalPanel`、`useChat`。
+- 清除调试日志。
+# Latest Changelog
+
 > Generated on 2026-07-08
 
 ## Server Basic Setup 页面重构
