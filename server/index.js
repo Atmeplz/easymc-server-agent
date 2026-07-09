@@ -39,12 +39,12 @@ const config = loadConfig();
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*' },
-  maxHttpBufferSize: 50 * 1024 * 1024,
+  cors: { origin: ['http://localhost', 'http://127.0.0.1'] },
+  maxHttpBufferSize: 1 * 1024 * 1024, // 1MB — sufficient for chat messages and tool args
 });
 
-app.use(cors());
-app.use(express.json({ limit: '200mb' }));
+app.use(cors({ origin: ['http://localhost', 'http://127.0.0.1'] }));
+app.use(express.json({ limit: '10mb' }));
 
 const clientDist = path.join(process.cwd(), 'client', 'dist');
 if (fs.existsSync(clientDist)) {
@@ -244,10 +244,27 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Maximum allowed upload size (10 MB) to prevent disk exhaustion.
+  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
   socket.on('agent:upload_file', async ({ fileName, fileData }) => {
     try {
-      const targetPath = path.join(process.cwd(), fileName);
-      fs.writeFileSync(targetPath, Buffer.from(fileData, 'base64'));
+      if (!fileName || typeof fileName !== 'string') {
+        socket.emit('agent:file_uploaded', { fileName, success: false, error: 'Invalid fileName.' });
+        return;
+      }
+      const check = fileGuard.validate(fileName, 'write');
+      if (!check.allowed) {
+        socket.emit('agent:file_uploaded', { fileName, success: false, error: check.reason });
+        return;
+      }
+      const buf = Buffer.from(fileData || '', 'base64');
+      if (buf.length > MAX_UPLOAD_BYTES) {
+        socket.emit('agent:file_uploaded', { fileName, success: false, error: 'File too large (max 10MB).' });
+        return;
+      }
+      fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
+      fs.writeFileSync(check.resolvedPath, buf);
       socket.emit('agent:file_uploaded', { fileName, success: true });
     } catch (err) {
       socket.emit('agent:file_uploaded', { fileName, success: false, error: err.message });
@@ -601,7 +618,8 @@ findAvailablePort(PREFERRED_PORT, MAX_PORT_ATTEMPTS).then((port) => {
     console.warn(`[Server] Port ${PREFERRED_PORT} is busy. Switched to ${port}.`);
   }
 
-  server.listen(port, () => {
+  // Bind to 127.0.0.1 only — this is a local management tool, not a public service.
+  server.listen(port, '127.0.0.1', () => {
     console.log('\n  EasyMC Server Agent started.');
     console.log(`  http://localhost:${port}\n`);
     console.log(`[EasyMC:PORT]${port}`);

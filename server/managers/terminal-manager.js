@@ -3,7 +3,18 @@
  */
 /**
  * Terminal Manager - manages terminal stdin/stdout pipes.
- * Ring buffer plus output callbacks.
+ *
+ * Uses a ring buffer (circular buffer) for O(1) append and eviction,
+ * instead of Array.push + Array.shift which is O(n) per eviction
+ * when the buffer is full.
+ *
+ * Ring buffer layout:
+ *   buffer = [e0, e1, ..., e_{max-1}]   (pre-allocated, fixed size)
+ *   head   = index where the NEXT entry will be written
+ *   count  = number of valid entries (0 .. max)
+ *
+ * When the buffer is full (count === max), head wraps around and
+ * overwrites the oldest entry — no shifting required.
  */
 const fs = require('fs');
 const path = require('path');
@@ -11,8 +22,13 @@ const path = require('path');
 class TerminalManager {
   constructor(config) {
     this.config = config;
-    this.history = [];
     this.maxHistory = config.terminal?.historySize || 5000;
+
+    // Ring buffer — pre-allocate once, never resize.
+    this.buffer = new Array(this.maxHistory);
+    this.head = 0;   // Next write position.
+    this.count = 0;  // Number of valid entries.
+
     this.listeners = [];
     this.logStream = null;
 
@@ -33,7 +49,8 @@ class TerminalManager {
   }
 
   /**
-   * Add output to the ring-buffer history.
+   * Add output to the ring buffer.
+   * O(1) time complexity — no array shifting.
    */
   addOutput(line) {
     const entry = {
@@ -41,12 +58,16 @@ class TerminalManager {
       timestamp: Date.now(),
     };
 
-    this.history.push(entry);
-    if (this.history.length > this.maxHistory) {
-      this.history.shift();
+    // Write to the current head position.
+    this.buffer[this.head] = entry;
+    // Advance head with wrap-around.
+    this.head = (this.head + 1) % this.maxHistory;
+    // Track count until the buffer is full.
+    if (this.count < this.maxHistory) {
+      this.count += 1;
     }
 
-    // Write to the log.
+    // Write to the log file.
     if (this.logStream) {
       this.logStream.write(`[${new Date().toISOString()}] ${line}\n`);
     }
@@ -63,6 +84,7 @@ class TerminalManager {
 
   /**
    * Register an output callback.
+   * Returns a cleanup function that removes the listener.
    */
   onOutput(callback) {
     this.listeners.push(callback);
@@ -72,31 +94,50 @@ class TerminalManager {
   }
 
   /**
-   * Get historical output.
+   * Convert the ring buffer to a flat array of entry objects.
+   * Internal helper — callers should use getHistory / getRecentLines.
+   */
+  _toArray() {
+    const result = new Array(this.count);
+    // If the buffer hasn't wrapped yet, entries start at index 0.
+    // If it has wrapped, the oldest entry is at `head` (which now
+    // points to the slot that was overwritten first).
+    const start = this.count < this.maxHistory ? 0 : this.head;
+    for (let i = 0; i < this.count; i++) {
+      result[i] = this.buffer[(start + i) % this.maxHistory];
+    }
+    return result;
+  }
+
+  /**
+   * Get historical output as an array of strings.
    */
   getHistory() {
-    return this.history.map(e => e.text);
+    return this._toArray().map(e => e.text);
   }
 
   /**
    * Clear history.
    */
   clearHistory() {
-    this.history = [];
+    this.buffer = new Array(this.maxHistory);
+    this.head = 0;
+    this.count = 0;
   }
 
   /**
    * Get the latest N lines.
    */
   getRecentLines(n = 50) {
-    return this.history.slice(-n).map(e => e.text);
+    const all = this._toArray();
+    return all.slice(-n).map(e => e.text);
   }
 
   /**
    * Search historical output.
    */
   searchHistory(keyword) {
-    return this.history
+    return this._toArray()
       .filter(e => e.text.includes(keyword))
       .map(e => e.text);
   }

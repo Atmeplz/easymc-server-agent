@@ -194,14 +194,33 @@ async function executeTool(toolName, args, context) {
         }
       }
 
+      // Record the history length before sending so we can capture only new lines.
+      const historyBefore = terminalManager.getHistory().length;
       const sent = serverManager.sendCommand(cmd);
       if (!sent) {
         return { success: false, error: '服务器未运行，无法执行命令' };
       }
-      // Wait briefly to collect command output.
-      await new Promise(r => setTimeout(r, 1500));
-      const recent = terminalManager.getRecentLines(10);
-      return { success: true, command: cmd, recentOutput: recent };
+      // Poll for new output — up to 2 seconds, checking every 100ms.
+      const output = [];
+      const deadline = Date.now() + 2000;
+      let lastLen = historyBefore;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 100));
+        const curHistory = terminalManager.getHistory();
+        if (curHistory.length > lastLen) {
+          for (let i = lastLen; i < curHistory.length; i++) {
+            const line = curHistory[i];
+            // Skip the command echo line that sendCommand adds.
+            if (!line.startsWith(`> ${cmd}`)) {
+              output.push(line);
+            }
+          }
+          lastLen = curHistory.length;
+        }
+        // Stop early once we have meaningful feedback.
+        if (output.length >= 3) break;
+      }
+      return { success: true, command: cmd, recentOutput: output.slice(-10) };
     }
 
     case 'server_manager': {
@@ -398,8 +417,8 @@ async function executeTool(toolName, args, context) {
       }
 
       let content = '';
-      if (fs.existsSync(propsPath)) {
-        content = fs.readFileSync(propsPath, 'utf-8');
+      if (fs.existsSync(writeCheck.resolvedPath)) {
+        content = fs.readFileSync(writeCheck.resolvedPath, 'utf-8');
       }
 
       const newLine = `${args.key}=${args.value}`;
@@ -416,7 +435,8 @@ async function executeTool(toolName, args, context) {
         lines.push(newLine);
       }
 
-      fs.writeFileSync(propsPath, lines.join('\n'), 'utf-8');
+      // Always write to the validated resolved path, not the raw input path.
+      fs.writeFileSync(writeCheck.resolvedPath, lines.join('\n'), 'utf-8');
       return { success: true, key: args.key, value: args.value, action: found ? 'updated' : 'added' };
     }
 
@@ -427,6 +447,14 @@ async function executeTool(toolName, args, context) {
 
       if (!fs.existsSync(worldPath)) {
         return { success: false, error: `世界目录 "${worldName}" 不存在` };
+      }
+
+      // If the server is running, flush world data to disk before copying
+      // to avoid capturing a partially-written chunk.
+      if (serverManager && serverManager.getStatus() === 'running') {
+        serverManager.sendCommand('save-all');
+        // Wait for the save to complete.
+        await new Promise(r => setTimeout(r, 2000));
       }
 
       const outputDir = path.join(serverDir, 'backups');

@@ -214,13 +214,25 @@ class AgentCore {
     };
     const context = this.getContext(onConfirmPlayer);
 
+    // Build a filtered tool list for player requests.
+    // These tools are either redundant (broadcast_reply — chat-monitor handles it)
+    // or too powerful for in-game players (file_manager, server_properties, backup_world).
+    // By removing them from the list entirely, the model never wastes a round
+    // trying to call them.
+    const PLAYER_BLOCKED_TOOLS = new Set([
+      'broadcast_reply', 'file_manager', 'server_properties', 'backup_world',
+    ]);
+    const playerTools = this.tools.filter(
+      t => !PLAYER_BLOCKED_TOOLS.has(t.function.name)
+    );
+
     try {
-      for (let round = 0; round < 3; round += 1) {
+      for (let round = 0; round < 6; round += 1) {
         const response = await this._callWithRetry(() =>
           this.client.chat.completions.create({
             model: this.config.ai.model,
             messages,
-            tools: this.tools,
+            tools: playerTools,
             tool_choice: 'auto',
             temperature: 0.5,
             max_tokens: 256,
@@ -243,6 +255,7 @@ class AgentCore {
               funcArgs = {};
             }
 
+            // --- Permission checks for execute_mc_command ---
             if (funcName === 'execute_mc_command') {
               const cmd = (funcArgs.command || '').replace(/^\/+/, '');
               const cmdBase = cmd.split(' ')[0];
@@ -275,6 +288,7 @@ class AgentCore {
               executedCommands.push(cmd);
             }
 
+            // --- Restrict server_manager to status-only for players ---
             if (funcName === 'server_manager' && funcArgs.action !== 'status') {
               messages.push({
                 role: 'tool',
@@ -287,25 +301,14 @@ class AgentCore {
               continue;
             }
 
-            if (funcName === 'broadcast_reply') {
+            // --- Safety net: if the model somehow calls a blocked tool, reject it ---
+            if (PLAYER_BLOCKED_TOOLS.has(funcName)) {
               messages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({
                   success: false,
-                  error: 'Player chat is already broadcast by the server. Do not call broadcast_reply.',
-                }),
-              });
-              continue;
-            }
-
-            if (['file_manager', 'server_properties'].includes(funcName)) {
-              messages.push({
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                content: JSON.stringify({
-                  success: false,
-                  error: 'Players cannot use file-management tools.',
+                  error: 'This tool is not available for player requests.',
                 }),
               });
               continue;

@@ -73,6 +73,14 @@ class ServerManager {
       this.terminalManager.addOutput(line);
     });
 
+    // Clean up readline interfaces when the streams close.
+    stdoutReader.on('close', () => {
+      console.log('[ServerManager] stdout stream closed');
+    });
+    stderrReader.on('close', () => {
+      console.log('[ServerManager] stderr stream closed');
+    });
+
     // Handle process exit.
     this.process.on('exit', (code, signal) => {
       console.log(`[ServerManager] 进程退出: code=${code}, signal=${signal}`);
@@ -108,6 +116,11 @@ class ServerManager {
 
   /**
    * Stop the Minecraft server gracefully.
+   *
+   * Uses an event-driven approach: listens for the process 'exit' event
+   * instead of polling with setInterval. This eliminates the 200ms delay
+   * and the race condition where this.process could become null between
+   * the check and the SIGKILL.
    */
   async stop(timeout = 30000) {
     if (!this.process) {
@@ -116,27 +129,39 @@ class ServerManager {
 
     this.setStatus('stopping');
 
+    // Capture the process reference — the exit handler in start() will
+    // set this.process = null, but we still hold our local ref.
+    const proc = this.process;
+
     // Send the stop command.
     this.sendCommand('stop');
 
-    // Wait for the process to exit.
     return new Promise((resolve, reject) => {
+      let settled = false;
+
       const timer = setTimeout(() => {
-        // Force kill after timeout.
-        if (this.process) {
+        if (!settled) {
+          settled = true;
           this.terminalManager.addOutput('[EasyMC] 超时，强制关闭服务器');
-          this.process.kill('SIGKILL');
+          try {
+            proc.kill('SIGKILL');
+          } catch (_) {
+            // Process may have already exited — ignore.
+          }
+          reject(new Error('服务器停止超时'));
         }
-        reject(new Error('服务器停止超时'));
       }, timeout);
 
-      const checkExit = setInterval(() => {
-        if (!this.process) {
+      const onExit = () => {
+        if (!settled) {
+          settled = true;
           clearTimeout(timer);
-          clearInterval(checkExit);
           resolve();
         }
-      }, 200);
+      };
+
+      // Listen for the exit event directly — no polling needed.
+      proc.on('exit', onExit);
     });
   }
 

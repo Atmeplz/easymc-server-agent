@@ -14,6 +14,7 @@ import {
   Database,
   Download,
   HardDrive,
+  KeyRound,
   Loader2,
   MessageCircle,
   Moon,

@@ -4,6 +4,13 @@
 /**
  * Chat Monitor - watches in-game @agent messages and dispatches them.
  * Parses player chat from terminal output and detects the @agent trigger.
+ *
+ * Robustness features:
+ * - Strips ANSI codes and Minecraft log prefixes (Vanilla / Paper / Spigot / Forge / Fabric).
+ * - Prevents self-loop by ignoring the agent's own /say broadcasts.
+ * - Per-player cooldown to prevent API cost abuse.
+ * - Processing timeout to auto-clear stuck entries.
+ * - Duplicate-request guard via a processing Map.
  */
 const PermissionManager = require('../permissions/permission-manager');
 
@@ -21,10 +28,19 @@ class ChatMonitor {
     this.replyPrefix = config.agent?.replyPrefix || '[Agent]';
     this.permissionManager = new PermissionManager(serverDir);
     this.listeners = [];
-    this.processing = new Set(); // Prevent duplicate processing.
 
-    // Listen for terminal output.
-    terminalManager.onOutput((line) => this.parseLine(line));
+    // --- Rate limiting & dedup state ---
+    // Map<requestKey, true> — prevents the exact same request being processed twice.
+    this.processing = new Map();
+    // Map<playerName, expiryTimestamp> — per-player cooldown after each request.
+    this.playerCooldowns = new Map();
+    // Cooldown duration (ms) — a player must wait this long between @agent requests.
+    this.cooldownMs = (config.agent?.cooldownMs ?? 10_000);
+    // Auto-clear a stuck processing entry after this duration (ms).
+    this.processingTimeoutMs = (config.agent?.processingTimeoutMs ?? 60_000);
+
+    // Register terminal listener — keep the cleanup function for destroy().
+    this.terminalCleanup = terminalManager.onOutput((line) => this.parseLine(line));
   }
 
   /**
@@ -36,19 +52,26 @@ class ChatMonitor {
 
   /**
    * Remove the standard Minecraft log prefix:
-   *   [HH:MM:SS] [thread/LEVEL]: <body>
-   *   [HH:MM:SS LEVEL]: <body>
+   *   [HH:MM:SS] [thread/LEVEL]: <body>            (Vanilla / Paper / Spigot)
+   *   [HH:MM:SS.mmm] [thread/LEVEL]: <body>         (Forge / Fabric with millis)
+   *   [HH:MM:SS INFO]: <body>                       (compact Spigot)
+   *   [HH:MM:SS] [thread/LEVEL] [Not Secure]: <body> (Paper unsigned chat)
+   *   [HH:MM:SS.mmm] [thread/LEVEL] [mod/class]: <body>  (Forge mod prefix)
    * Also removes the Paper "[Not Secure]" unsigned-chat marker.
    */
   stripLogPrefix(line) {
-    // Remove timestamp + thread/level prefix.
-    // Matches common Minecraft log formats:
-    //   [12:34:56] [Server thread/INFO]: body
-    //   [12:34:56] [Server thread/INFO] [Not Secure]: body
-    //   [12:34:56 INFO]: body
-    let body = line.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*\[[^\]]+\/[^\]]+\]:\s*/, '');
-    // Alternative compact format without brackets around level.
-    body = body.replace(/^\[\d{2}:\d{2}:\d{2}\s+\w+\]:\s*/, '');
+    // Remove timestamp + [thread/LEVEL]: prefix (supports optional milliseconds).
+    let body = line.replace(
+      /^\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*\[[^\]]+\/[^\]]+\]:\s*/,
+      ''
+    );
+    // Alternative compact format: [HH:MM:SS LEVEL]:
+    body = body.replace(
+      /^\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\w+\]:\s*/,
+      ''
+    );
+    // Strip Forge/Fabric [mod/class]: prefix if it appears before the chat body.
+    body = body.replace(/^\[[^\]]+\/[^\]]+\]:\s*/, '');
     // Remove [Not Secure] marker that appears before the actual chat.
     body = body.replace(/^\[Not Secure\]\s+/, '');
     return body;
@@ -56,12 +79,20 @@ class ChatMonitor {
 
   /**
    * Determine whether a stripped line is the agent's own reply broadcast.
-   * This prevents the AI from replying to itself.
+   * This prevents the AI from replying to itself (infinite loop).
+   *
+   * The /say command outputs "[Server] <message>", so when we send
+   *   say [Agent]: hello
+   * the console shows:
+   *   [12:34:56] [Server thread/INFO]: [Server] [Agent]: hello
+   * After stripping the log prefix the body starts with "[Server] [Agent]:".
    */
   isAgentReply(line) {
     const stripped = this.stripLogPrefix(line);
-    // The agent's say output is shown as "[Server] [Agent]: ..." or "[Agent]: ...".
-    return stripped.startsWith(`${this.replyPrefix}:`) || stripped.startsWith(`[Server] ${this.replyPrefix}:`);
+    return (
+      stripped.startsWith(`${this.replyPrefix}:`) ||
+      stripped.startsWith(`[Server] ${this.replyPrefix}:`)
+    );
   }
 
   /**
@@ -91,12 +122,38 @@ class ChatMonitor {
   }
 
   /**
-   * Handle an @agent request.
+   * Handle an @agent request with cooldown and dedup guards.
    */
   async handleAgentRequest(playerName, request) {
+    const now = Date.now();
+
+    // --- Per-player cooldown ---
+    const cdExpiry = this.playerCooldowns.get(playerName);
+    if (cdExpiry && cdExpiry > now) {
+      const waitSec = Math.ceil((cdExpiry - now) / 1000);
+      this.serverManager.sendCommand(
+        `say ${this.replyPrefix}: 请稍候再试 (${waitSec}s)`
+      );
+      return;
+    }
+
+    // --- Duplicate-request guard ---
     const requestKey = `${playerName}:${request}`;
-    if (this.processing.has(requestKey)) return;
-    this.processing.add(requestKey);
+    if (this.processing.has(requestKey)) {
+      this.serverManager.sendCommand(
+        `say ${this.replyPrefix}: 正在处理中，请稍候`
+      );
+      return;
+    }
+
+    this.processing.set(requestKey, true);
+    this.playerCooldowns.set(playerName, now + this.cooldownMs);
+
+    // Safety timeout — auto-clear stuck entries so a frozen API call
+    // doesn't permanently block the player.
+    const safetyTimer = setTimeout(() => {
+      this.processing.delete(requestKey);
+    }, this.processingTimeoutMs);
 
     try {
       // Look up player permissions.
@@ -147,8 +204,9 @@ class ChatMonitor {
       console.error(`[ChatMonitor] Failed to handle @agent request:`, error.message);
       // Broadcast the error to the Minecraft server.
       const prefix = this.replyPrefix;
-      this.serverManager.sendCommand(`say ${prefix}: AI is temporarily unavailable, please try again later.`);
+      this.serverManager.sendCommand(`say ${prefix}: AI暂时不可用，请稍后再试。`);
     } finally {
+      clearTimeout(safetyTimer);
       this.processing.delete(requestKey);
     }
   }
@@ -174,10 +232,16 @@ class ChatMonitor {
   }
 
   /**
-   * Destroy resources.
+   * Destroy resources — clean up terminal listener and file watchers.
    */
   destroy() {
+    if (this.terminalCleanup) {
+      this.terminalCleanup();
+      this.terminalCleanup = null;
+    }
     this.listeners = [];
+    this.playerCooldowns.clear();
+    this.processing.clear();
     if (this.permissionManager) {
       this.permissionManager.destroy();
     }
