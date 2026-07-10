@@ -12,6 +12,18 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 
+// Maximum allowed upload size (10 MB) to prevent disk exhaustion.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+// Global safety nets: log unexpected errors instead of crashing the process.
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught exception:', err.message);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process] Unhandled rejection at:', reason);
+});
+
 function loadConfig() {
   const defaults = require('./config');
   const localPath = path.join(process.cwd(), 'config.local.json');
@@ -165,6 +177,19 @@ io.on('connection', (socket) => {
     });
   };
 
+  // Wrap async socket handlers so a thrown error emits a targeted error
+  // event instead of crashing the process or leaving the client hanging.
+  function handle(event, handler) {
+    socket.on(event, async (...args) => {
+      try {
+        await handler(...args);
+      } catch (err) {
+        console.error(`[Socket:${event}] Handler error:`, err.message);
+        socket.emit(`${event}:error`, { error: err.message });
+      }
+    });
+  }
+
   socket.on('terminal:input', ({ command }) => {
     serverManager.sendCommand(command);
   });
@@ -245,7 +270,7 @@ io.on('connection', (socket) => {
   });
 
   // Maximum allowed upload size (10 MB) to prevent disk exhaustion.
-  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+  // const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
   socket.on('agent:upload_file', async ({ fileName, fileData }) => {
     try {
@@ -378,8 +403,9 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const interruptedSessionId = activeChatRun.sessionId;
     stopActiveChatRun();
-    socket.emit('chat:interrupted', { sessionId: activeChatRun.sessionId });
+    socket.emit('chat:interrupted', { sessionId: interruptedSessionId });
   });
 
   socket.on('chat:sessions:list', () => {
@@ -571,7 +597,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    stopActiveChatRun();
+    try {
+      stopActiveChatRun();
+    } catch (_) {
+      // Best-effort cleanup; the process/process controller may already be gone.
+    }
     activeChatRun = null;
     console.log(`[Socket] Client disconnected: ${socket.id}`);
   });

@@ -139,9 +139,11 @@ function openDefaultBrowser(port) {
 }
 
 function startServer() {
+  const config = require('./server/config');
+  const configuredPort = config.port || DEFAULT_PORT;
   log('');
   log('Starting server...');
-  log(`Close this window to stop localhost:${DEFAULT_PORT}.`);
+  log(`Close this window to stop localhost:${configuredPort}.`);
   log('');
 
   const server = spawn('node', ['server/index.js'], {
@@ -158,6 +160,7 @@ function startServer() {
   const openOnce = (port) => {
     if (browserOpened) return;
     browserOpened = true;
+    clearTimeout(fallbackTimer);
     openDefaultBrowser(port);
     if (Number(port) !== DEFAULT_PORT) {
       log(`WARN: Port ${DEFAULT_PORT} was not available. EasyMC opened localhost:${port} instead.`);
@@ -177,8 +180,13 @@ function startServer() {
   });
 
   const fallbackTimer = setTimeout(() => {
-    openOnce(DEFAULT_PORT);
-  }, 5000);
+    // Only fall back to opening the configured port if the server has not
+    // yet announced its bound port. The port marker is the authoritative
+    // signal; this timer is a safety net for slow starts.
+    if (!browserOpened) {
+      openOnce(configuredPort);
+    }
+  }, 8000);
 
   const shutdown = () => {
     if (shuttingDown) return;

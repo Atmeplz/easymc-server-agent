@@ -43,6 +43,10 @@ class TerminalManager {
       fs.mkdirSync(logDir, { recursive: true });
       const logPath = path.join(logDir, 'agent-terminal.log');
       this.logStream = fs.createWriteStream(logPath, { flags: 'a' });
+      this.logStream.on('error', (err) => {
+        console.warn('[TerminalManager] 日志写入失败:', err.message);
+        this.logStream = null;
+      });
     } catch (e) {
       console.warn('[TerminalManager] 无法创建日志文件:', e.message);
     }
@@ -53,6 +57,8 @@ class TerminalManager {
    * O(1) time complexity — no array shifting.
    */
   addOutput(line) {
+    if (this.destroyed) return;
+
     const entry = {
       text: line,
       timestamp: Date.now(),
@@ -120,15 +126,19 @@ class TerminalManager {
    * Clear history.
    */
   clearHistory() {
-    this.buffer = new Array(this.maxHistory);
+    // Reset in place instead of reallocating the buffer array.
     this.head = 0;
     this.count = 0;
+    for (let i = 0; i < this.buffer.length; i++) {
+      this.buffer[i] = undefined;
+    }
   }
 
   /**
    * Get the latest N lines.
    */
   getRecentLines(n = 50) {
+    if (this.destroyed) return [];
     const all = this._toArray();
     return all.slice(-n).map(e => e.text);
   }
@@ -137,6 +147,7 @@ class TerminalManager {
    * Search historical output.
    */
   searchHistory(keyword) {
+    if (this.destroyed) return [];
     return this._toArray()
       .filter(e => e.text.includes(keyword))
       .map(e => e.text);
@@ -146,9 +157,11 @@ class TerminalManager {
    * Destroy resources.
    */
   destroy() {
+    this.destroyed = true;
     this.listeners = [];
     if (this.logStream) {
       this.logStream.end();
+      this.logStream = null;
     }
   }
 }

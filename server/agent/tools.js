@@ -7,20 +7,35 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { COMMAND_RULES, isBlacklisted } = require('../permissions/rules');
+
 const MAX_INSPECT_BYTES = 12000;
 
-// High-risk commands that require admin confirmation.
-const DANGEROUS_COMMANDS = new Set([
-  'stop', 'save-off', 'save-on', 'reload', 'defaultgamemode',
-  'op', 'deop', 'ban', 'pardon', 'whitelist',
-]);
+// Build the high-risk command set from the single source of truth in
+// permissions/rules.js so the two lists cannot drift apart.
+const DANGEROUS_COMMANDS = new Set();
+for (const rule of Object.values(COMMAND_RULES)) {
+  if (rule.level >= 3) {
+    for (const cmd of rule.commands) {
+      DANGEROUS_COMMANDS.add(cmd.split(' ')[0]);
+    }
+  }
+}
+
+// Prevent command injection: commands must be a single line.
+function validateSingleLine(command) {
+  if (command.includes('\n') || command.includes('\r')) {
+    return { valid: false, reason: '命令不能包含换行符' };
+  }
+  return { valid: true };
+}
 
 /**
  * Check whether a command is high risk.
  */
 function isDangerousCommand(command) {
   const cmdBase = (command || '').replace(/^\/+/, '').split(' ')[0].toLowerCase();
-  return DANGEROUS_COMMANDS.has(cmdBase);
+  return DANGEROUS_COMMANDS.has(cmdBase) || isBlacklisted(command);
 }
 
 /**
@@ -173,6 +188,10 @@ async function executeTool(toolName, args, context) {
         return { success: false, error: '缺少 command 参数' };
       }
       const cmd = args.command.replace(/^\/+/, '');
+      const singleLine = validateSingleLine(cmd);
+      if (!singleLine.valid) {
+        return { success: false, error: singleLine.reason };
+      }
       const cmdBase = cmd.split(' ')[0].toLowerCase();
 
       // High-risk command confirmation flow.
@@ -411,6 +430,15 @@ async function executeTool(toolName, args, context) {
       }
 
       // Write mode.
+      const key = String(args.key || '').trim();
+      const value = String(args.value ?? '');
+      if (!key || !/^[a-zA-Z0-9._-]+$/.test(key)) {
+        return { success: false, error: `属性名无效: "${key}"` };
+      }
+      if (value.includes('\n') || value.includes('\r')) {
+        return { success: false, error: '属性值不能包含换行符' };
+      }
+
       const writeCheck = fileGuard.validate(propsPath, 'write');
       if (!writeCheck.allowed) {
         return { success: false, error: `拒绝写入: ${writeCheck.reason}` };
@@ -421,11 +449,11 @@ async function executeTool(toolName, args, context) {
         content = fs.readFileSync(writeCheck.resolvedPath, 'utf-8');
       }
 
-      const newLine = `${args.key}=${args.value}`;
+      const newLine = `${key}=${value}`;
       const lines = content.split('\n');
       let found = false;
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim().startsWith(args.key + '=')) {
+        if (lines[i].trim().startsWith(key + '=')) {
           lines[i] = newLine;
           found = true;
           break;
@@ -437,7 +465,7 @@ async function executeTool(toolName, args, context) {
 
       // Always write to the validated resolved path, not the raw input path.
       fs.writeFileSync(writeCheck.resolvedPath, lines.join('\n'), 'utf-8');
-      return { success: true, key: args.key, value: args.value, action: found ? 'updated' : 'added' };
+      return { success: true, key, value, action: found ? 'updated' : 'added' };
     }
 
     case 'backup_world': {

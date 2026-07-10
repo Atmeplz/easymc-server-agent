@@ -13,6 +13,9 @@ const fs = require('fs');
 // Standard ANSI escape sequence regex.
 const ANSI_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
+// Server-ready log markers for common Minecraft server implementations.
+const READY_MARKERS = ['Done (', 'For help, type', 'Loading complete!'];
+
 class ServerManager {
   constructor(config, javaManager, terminalManager) {
     this.config = config;
@@ -103,10 +106,10 @@ class ServerManager {
    */
   detectServerReady(line) {
     if (this.status === 'starting') {
-      if (line.includes('Done (') || line.includes('For help, type')) {
+      if (READY_MARKERS.some(marker => line.includes(marker))) {
         this.setStatus('running');
         // Try to parse the Minecraft version from logs.
-        const verMatch = line.match(/for Minecraft (\S+)/);
+        const verMatch = line.match(/for Minecraft ([\d.]+[a-zA-Z0-9\-._]*)/);
         if (verMatch) {
           this.mcVersion = verMatch[1];
         }
@@ -182,8 +185,10 @@ class ServerManager {
     if (!this.process || !this.process.stdin.writable) {
       return false;
     }
-    this.process.stdin.write(command + '\n');
-    this.terminalManager.addOutput(`> ${command}`);
+    // Prevent multi-command injection through embedded newlines.
+    const safeCommand = String(command).replace(/[\r\n]/g, ' ');
+    this.process.stdin.write(safeCommand + '\n');
+    this.terminalManager.addOutput(`> ${safeCommand}`);
     return true;
   }
 
@@ -240,8 +245,14 @@ class ServerManager {
       return javaInfo.path;
     }
 
-    // Fall back to system java.
-    return 'java';
+    // Fall back to system java, but only if it appears to be available.
+    try {
+      const { execFileSync } = require('child_process');
+      execFileSync('java', ['-version'], { stdio: 'ignore' });
+      return 'java';
+    } catch (_) {
+      throw new Error('未找到可用的 Java 运行时。请在设置中配置 Java 路径，或让 EasyMC 自动下载。');
+    }
   }
 }
 

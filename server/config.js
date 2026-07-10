@@ -16,7 +16,7 @@ module.exports = {
 
   ai: {
     provider: 'openai',
-    apiKey: '',
+    apiKey: process.env.EASYMC_API_KEY || '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
     temperature: 0.7,
@@ -65,6 +65,7 @@ module.exports = {
 
   java: {
     runtimeDir: './java-runtime',
+    customPath: '',
     versionMap: {
       '26.1+': 25,
       '1.20.5-1.21.11': 21,

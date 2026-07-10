@@ -1,109 +1,72 @@
 # Latest Changelog
 
-> Generated on 2026-07-09
+> Generated on 2026-07-10
 
-## fix: make in-game @agent chat actually work
+## 后端安全与可维护性维护
 
-### Bug 修复 & 核心功能
+本次维护聚焦后端安全加固、启动健壮性与重复规则统一，**未修改任何前端文件**，保持现有功能与界面完全一致。
 
-- **重写 chat-monitor 解析器**
-  - 剥离 Minecraft 日志前缀，正确检测真实控制台输出中的 `@agent`。
-  - 移除 `[` 跳过逻辑（该逻辑曾导致所有真实 MC 行被忽略）。
-  - 增加 `[Agent]` 广播的自循环防护，避免 Agent 回复触发自身。
+### 安全加固
 
-- **统一 socket 事件名称**
-  - 后端现在统一使用 `agent:player_request` 事件名，前后端对齐。
+- **命令注入防护**
+  - `server/managers/server-manager.js`：
+    - `sendCommand()` 现在会过滤命令中的 `\r` 和 `\n`，防止恶意输入拆分成多条命令执行。
+  - `server/agent/tools.js`：
+    - `execute_mc_command` 在执行前检查命令是否包含换行符，若包含则直接拒绝。
+  - `server/agent/tools.js`：
+    - `server_properties` 写入属性时，先校验 key 只允许 `a-zA-Z0-9._-`，并禁止 value 包含换行符，避免注入额外配置行。
 
-- **maxResponseLength 默认值对齐**
-  - 默认值统一为 30，修复截断逻辑确保响应永远不超过限制。
+- **高危命令规则统一**
+  - `server/permissions/rules.js`：
+    - `COMMAND_RULES.commands` 改为 `Set`，匹配语义更清晰。
+    - `PLAYER_BLACKLIST` 改为 `Set`，新增 `isBlacklisted()` 函数，正确处理 `whitelist off`、`save-off` 等多词命令。
+    - 导出 `isBlacklisted()` 供工具层复用。
+  - `server/agent/tools.js`：
+    - `DANGEROUS_COMMANDS` 改为从 `permissions/rules.js` 自动生成，避免两处定义不同步。
 
-- **屏蔽 broadcast_reply 工具**
-  - 在玩家聊天场景中禁用 `broadcast_reply` 工具，避免双重广播。
+### 健壮性提升
 
-- **server-manager stdout/stderr 处理优化**
-  - 使用 readline + ANSI 剥离，实现更健壮的进程输出处理。
+- **启动脚本**
+  - `start.js`：
+    - 关闭窗口提示中的端口从硬编码 `3000` 改为读取 `config.port`，避免与实际绑定端口不一致。
+    - 浏览器 fallback 定时器改为仅在未收到 `[EasyMC:PORT]` 标记时才触发，并延长至 8 秒，避免过早打开错误端口。
 
-### 前端改动
+- **服务入口**
+  - `server/index.js`：
+    - 将 `MAX_UPLOAD_BYTES` 提升到模块级常量。
+    - 新增全局 `uncaughtException` / `unhandledRejection` 兜底日志，避免未捕获异常导致进程崩溃。
+    - 新增 `handle()` 包装器统一捕获异步 Socket 事件处理器异常，防止服务端崩溃或客户端挂起。
+    - 修复 `agent:interrupt` 在 `stopActiveChatRun()` 后访问 `activeChatRun.sessionId` 的潜在空指针问题。
+    - `disconnect` 事件中对 `stopActiveChatRun()` 做 try/catch 保护。
 
-- 提取新的 `AgentStreamPage` 组件，增加连接/离线/最大消息数状态管理。
-- 使用稳定的 ref-based ID 管理流消息，历史消息上限 100 条。
-- 服务器控制台中高亮 `@agent` 和 `[Agent]` 行，提升可读性。
+- **终端管理器**
+  - `server/managers/terminal-manager.js`：
+    - 为 `logStream` 添加 `error` 事件处理，磁盘满或权限错误时不会抛出未捕获异常。
+    - `clearHistory()` 改为原地重置 ring buffer，避免重新分配大数组触发 GC。
+    - `destroy()` 后设置 `destroyed` 标记，后续读取操作返回空数组，避免返回过期数据。
 
-### 清理
+- **服务器管理器**
+  - `server/managers/server-manager.js`：
+    - 新增 `Loading complete!` 等服务器就绪标记，提高不同核心兼容性。
+    - 版本号解析正则更精确，避免捕获尾随标点。
+    - `resolveJavaPath()` 在回退到系统 `java` 前先验证其可用性，不可用则抛出清晰错误。
 
-- 移除遗留的废弃组件：`AgentActivityPanel`、`ChatPanel`、`TerminalPanel`、`useChat`。
-- 清除调试日志。
-# Latest Changelog
+- **下载服务**
+  - `server/download/download-service.js`：
+    - `.part` 临时文件在最终 `renameSync` 失败时会被清理，避免残留不完整下载。
 
-> Generated on 2026-07-08
+### 配置与依赖
 
-## Server Basic Setup 页面重构
+- `server/config.js`：
+  - `ai.apiKey` 默认支持 `EASYMC_API_KEY` 环境变量回退。
+  - 补充 `java.customPath: ''` 默认值，避免运行时动态字段写入 `config.local.json`。
 
-### 新增功能
+- `package.json`：
+  - 新增缺失的 `toml` 依赖（`mod-manager.js` 需要）。
+  - 移除未使用的 `open` 包。
 
-- **核心信息卡片**
-  - 通过读取 `server.jar` 内容自动检测核心类型、版本、Mod/Plugin 支持情况。
-  - 检测逻辑位于 `server/managers/core-detector.js`。
-  - 后端提供 `GET /api/server/core`，前端卡片实时展示核心名称、版本、Mods/Plugins 支持状态指示灯。
+### 验证
 
-- **核心更换**
-  - 点击核心卡片的“更换>”打开 Material You 风格弹窗。
-  - 通过隐藏文件选择器选取新的服务端 jar，以 base64 上传。
-  - 后端 `POST /api/server/core/jar` 接收后自动备份原 jar 并替换。
-  - **待完善（明日继续）**：实现逻辑需要是拷贝一份用户最终选中的 `.jar` 到 `mc-server` 文件夹中，将旧核心重命名为 `OLD_SERVER.jar.unused`，新的命名为 `server.jar`。这个过程需要在 Save 之后再做。
-
-- **JDK 信息卡片**
-  - 展示当前检测到的 Java 主版本号。
-  - 点击“更换>”打开 JDK 选择弹窗，支持：
-    - 从文件资源管理器选择 Java 可执行文件。
-    - 一键扫描系统可用 JDK（`GET /api/java/scan`），列出路径、版本、来源。
-
-- **游戏配置项**
-  - 游戏默认模式：生存 / 创造 / 极限 / 冒险（极限自动设置 `hardcore=true`）。
-  - 世界难度：和平 / 简单 / 普通 / 困难。
-  - 正版验证开关。
-  - 允许飞行开关。
-
-- **配置持久化**
-  - Save 按钮将游戏配置写入 `mc-server/server.properties`。
-  - JDK 自定义路径保存到 `config.local.json` 的 `java.customPath`。
-
-### 后端改动
-
-- `server/index.js`
-  - `express.json` 限制提升到 `200mb`，支持 base64 jar 上传。
-- `server/routes/api.js`
-  - 新增 `GET /api/server/core`。
-  - 新增 `POST /api/server/core/jar`。
-  - 新增 `GET /api/java/scan`。
-  - `POST /api/config` 支持 `mc.javaPath` 映射到 `config.java.customPath`。
-- `server/managers/core-detector.js`（新增）
-  - 读取 jar 内的 `META-INF/MANIFEST.MF`、`version.json`、`paper.yml`、`bukkit.yml`、`fabric.mod.json`、`META-INF/mods.toml` 等文件进行核心识别。
-  - 无法识别时回退到 `java -jar server.jar --version`。
-- `server/managers/java-manager.js`
-  - 新增 `scanForJavas()`，扫描 PATH、JAVA_HOME、Windows 常见 JDK 目录、macOS `/Library/Java`、Linux `/usr/lib/jvm` 等位置。
-
-### 前端改动
-
-- `client/src/App.jsx`
-  - 重写 `BasicSetupPage` 的标题栏、Save 按钮、核心/JDK 卡片、游戏模式/难度 pill 组、开关项。
-  - 新增核心更换弹窗、JDK 选择弹窗，风格与 Prompt 页面确认弹窗统一。
-  - 所有弹窗添加淡淡背景高斯模糊（`backdrop-blur-sm`）和淡入缩放动画。
-- `client/src/styles/index.css`
-  - 新增 `.dialog-backdrop` 和 `.dialog-content` 动画关键帧。
-
-### 问题修复
-
-- **“更换>”按钮无法点击**
-  - 原因：`client/dist` 构建产物未更新，DOM 中渲染为不可点击的 `<span>`。
-  - 解决：删除旧 `dist`，重新执行 `npm run build`。
-- **`/api/java/scan` 返回 HTML 导致 JSON 解析失败**
-  - 原因：浏览器访问的是 `localhost:3001`，该端口对应一个在我添加 `/api/java/scan` 路由之前就已启动的旧后端进程。
-  - 解决：终止旧进程，重新启动 `node server/index.js`，现在服务运行在 `localhost:3000`。
-- **PayloadTooLargeError**
-  - 原因：默认 `express.json` 限制太小，base64 jar 上传超出限制。
-  - 解决：将限制提升至 `200mb`。
-
-### 清理
-
-- 删除临时脚本 `.claude/replace-basic-setup.js`。
+- 已执行 `npm install` 与 `npm run build`，前端构建成功。
+- 使用内置浏览器完整验证：Agent Chat、Server Console、Download、Mods、Plugins、Server Basic Setup、Agent Tools、Prompt Settings、@agent Stream 页面均正常加载，明暗主题切换正常。
+- 浏览器控制台与服务端日志均无错误，网络请求无失败。

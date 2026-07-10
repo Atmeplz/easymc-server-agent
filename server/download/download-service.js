@@ -199,7 +199,16 @@ class DownloadService {
       const backupPath = `${targetPath}.${Date.now()}.bak`;
       fs.renameSync(targetPath, backupPath);
     }
-    fs.renameSync(partPath, targetPath);
+    try {
+      fs.renameSync(partPath, targetPath);
+    } catch (err) {
+      try {
+        fs.unlinkSync(partPath);
+      } catch (_) {
+        // Best-effort cleanup.
+      }
+      throw err;
+    }
 
     return {
       success: true,
