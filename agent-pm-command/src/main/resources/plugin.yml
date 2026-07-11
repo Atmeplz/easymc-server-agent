@@ -1,0 +1,11 @@
+name: AgentPM
+version: '${project.version}'
+main: com.easymc.agentpm.AgentPMPlugin
+api-version: '1.16'
+authors: [EasyMC]
+description: Private /agentpm command for the EasyMC @agent system.
+commands:
+  agentpm:
+    description: Send a private message to the EasyMC agent.
+    usage: /agentpm <message>
+    aliases: [apm]

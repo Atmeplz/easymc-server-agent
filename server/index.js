@@ -74,12 +74,20 @@ const PluginManager = require('./managers/plugin-manager');
 const ModManager = require('./managers/mod-manager');
 const ChatSessionManager = require('./managers/chat-session-manager');
 const DownloadService = require('./download/download-service');
+const PluginAutoDeployer = require('./managers/plugin-auto-deployer');
+const CoreDetector = require('./managers/core-detector');
 
 const javaManager = new JavaManager(config);
 const fileGuard = new FileGuard(config);
 const terminalManager = new TerminalManager(config);
-const serverManager = new ServerManager(config, javaManager, terminalManager);
 const deployManager = new DeployManager(config, javaManager);
+const coreDetector = new CoreDetector(config);
+const pluginAutoDeployer = new PluginAutoDeployer(
+  path.resolve(config.mc.serverDir),
+  coreDetector,
+  { builtinPluginsDir: config.easymc?.builtinPluginsDir || undefined }
+);
+const serverManager = new ServerManager(config, javaManager, terminalManager, pluginAutoDeployer);
 const pluginManager = new PluginManager(path.resolve(config.mc.serverDir));
 const modManager = new ModManager(path.resolve(config.mc.serverDir));
 const chatSessionManager = new ChatSessionManager(process.cwd());
@@ -137,6 +145,8 @@ const apiRouter = require('./routes/api')({
   modManager,
   pluginManager,
   downloadService,
+  pluginAutoDeployer,
+  coreDetector,
 });
 app.use('/api', apiRouter);
 

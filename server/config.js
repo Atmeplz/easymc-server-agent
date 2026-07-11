@@ -14,6 +14,11 @@ module.exports = {
     jvmArgs: ['-Xmx2G', '-Xms1G'],
   },
 
+  easymc: {
+    // Override built-in plugins source directory (default: <cwd>/.easymc/plugins).
+    builtinPluginsDir: '',
+  },
+
   ai: {
     provider: 'openai',
     apiKey: process.env.EASYMC_API_KEY || '',
@@ -33,6 +38,7 @@ module.exports = {
     trigger: '@agent',
     replyPrefix: '[Agent]',
     maxResponseLength: 30,
+    whisperMaxResponseLength: 128,
     requireApproval: false,
     approvalTimeout: 30000,
     maxToolRounds: 50,
@@ -42,6 +48,8 @@ module.exports = {
       'stop', 'whitelist off', 'reload',
     ],
     chatRegex: '^<(\\w{1,16})>\\s+(.+)',
+    ingameMemoryDir: './mc-server/ingame_memory',
+    privateMessageCommand: '/agentpm',
   },
 
   prompts: {

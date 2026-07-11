@@ -50,13 +50,15 @@ class AgentCore {
     return this.client !== null;
   }
 
-  getContext(onConfirm) {
+  getContext(onConfirm, callerPlayerName = null, isWhisper = false) {
     return {
       serverManager: this.serverManager,
       terminalManager: this.terminalManager,
       fileGuard: this.fileGuard,
       config: this.config,
       onConfirm: onConfirm || null,
+      callerPlayerName: callerPlayerName || null,
+      isWhisper: isWhisper || false,
     };
   }
 
@@ -190,7 +192,7 @@ class AgentCore {
     }
   }
 
-  async handlePlayerRequest(playerName, request, permission) {
+  async handlePlayerRequest(playerName, request, permission, isWhisper = false) {
     if (!this.isAvailable()) {
       return {
         reply: 'AI is not online yet.',
@@ -202,7 +204,7 @@ class AgentCore {
     }
 
     const messages = [
-      { role: 'system', content: getPlayerPrompt(playerName, permission.level, permission.description, this.config) },
+      { role: 'system', content: getPlayerPrompt(playerName, permission.level, permission.description, this.config, isWhisper) },
       { role: 'user', content: request },
     ];
 
@@ -212,7 +214,7 @@ class AgentCore {
       this.serverManager.sendCommand(`say ${prefix}: Dangerous task "${command}" needs server admin approval.`);
       return false;
     };
-    const context = this.getContext(onConfirmPlayer);
+    const context = this.getContext(onConfirmPlayer, playerName, isWhisper);
 
     // Build a filtered tool list for player requests.
     // These tools are either redundant (broadcast_reply — chat-monitor handles it)
@@ -326,7 +328,9 @@ class AgentCore {
         }
 
         let reply = assistantMessage.content || '';
-        const maxLen = this.config.agent?.maxResponseLength || 30;
+        const maxLen = isWhisper
+          ? (this.config.agent?.whisperMaxResponseLength || 128)
+          : (this.config.agent?.maxResponseLength || 30);
         if (reply.length > maxLen) {
           reply = `${reply.slice(0, maxLen - 3)}...`;
         }

@@ -7,10 +7,11 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const { getAdminPrompt, getPlayerPrompt } = require('../agent/prompts');
 const { getToolDefinitions } = require('../agent/tools');
 const DownloadService = require('../download/download-service');
-const CoreDetector = require('../managers/core-detector');
+const IngameMemoryStore = require('../agent/ingame-memory-store');
 
 module.exports = function ({
   config,
@@ -23,10 +24,28 @@ module.exports = function ({
   modManager,
   pluginManager,
   downloadService: providedDownloadService,
+  coreDetector,
+  pluginAutoDeployer,
 }) {
   const router = express.Router();
   const downloadService = providedDownloadService || new DownloadService({ config, deployManager, modManager, pluginManager });
-  const coreDetector = new CoreDetector(config);
+
+  router.post('/server/archive-memory', (req, res) => {
+    try {
+      const serverDir = path.resolve(config.mc?.serverDir || './mc-server');
+      const ingameMemoryDir = config.agent?.ingameMemoryDir
+        ? path.relative(serverDir, path.resolve(config.agent.ingameMemoryDir))
+        : 'ingame_memory';
+      const store = new IngameMemoryStore(serverDir, { ingameMemoryDir });
+      store.ensureStructure();
+      const result = store.archiveOldMemory();
+      console.log('[API] Manual memory archive:', result.archivedTo);
+      res.json({ success: true, archivedTo: result.archivedTo });
+    } catch (err) {
+      console.error('[API] Memory archive failed:', err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
 
   // Return configuration with sensitive values masked.
   router.get('/config', (req, res) => {
@@ -239,6 +258,15 @@ module.exports = function ({
       fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
       fs.writeFileSync(check.resolvedPath, Buffer.from(fileData, 'base64'));
       coreDetector.invalidateCache();
+
+      // Re-deploy built-in plugins if the new core supports them.
+      if (pluginAutoDeployer) {
+        try {
+          await pluginAutoDeployer.deployIfSupported();
+        } catch (deployErr) {
+          console.error('[API] Plugin auto-deploy after jar change failed:', deployErr.message);
+        }
+      }
 
       res.json({ success: true, jarPath: check.resolvedPath });
     } catch (err) {

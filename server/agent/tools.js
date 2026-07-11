@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { COMMAND_RULES, isBlacklisted } = require('../permissions/rules');
+const IngameMemoryStore = require('./ingame-memory-store');
 
 const MAX_INSPECT_BYTES = 12000;
 
@@ -170,6 +171,36 @@ function getToolDefinitions() {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'ingame_memory',
+        description: '读写玩家的游戏内记忆。公开记忆可被任何人查询，私有记忆只能被记忆所有者查询。',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              enum: ['read_public', 'read_private', 'write_public', 'write_private', 'list_players'],
+              description: 'read_public: 读取指定玩家的公开记忆; read_private: 读取自己的私有记忆; write_public/write_private: 写入自己的公开/私有记忆; list_players: 列出所有有记忆的玩家',
+            },
+            targetPlayer: {
+              type: 'string',
+              description: '要读取公开记忆的玩家名（仅 read_public 使用）',
+            },
+            content: {
+              type: 'string',
+              description: '要写入的记忆内容（仅 write 使用）',
+            },
+            append: {
+              type: 'boolean',
+              description: 'true 追加，false 覆盖。默认 true',
+            },
+          },
+          required: ['action'],
+        },
+      },
+    },
   ];
 }
 
@@ -180,7 +211,10 @@ function getToolDefinitions() {
  * @param {object} context - { serverManager, terminalManager, fileGuard, config }
  */
 async function executeTool(toolName, args, context) {
-  const { serverManager, terminalManager, fileGuard, config, onConfirm } = context;
+  const {
+    serverManager, terminalManager, fileGuard, config, onConfirm,
+    callerPlayerName, isWhisper,
+  } = context;
 
   switch (toolName) {
     case 'execute_mc_command': {
@@ -517,6 +551,54 @@ async function executeTool(toolName, args, context) {
         sizeMB: parseFloat(sizeMB),
         message: `世界 "${worldName}" 已备份到 mc-server/backups/${backupName}（${sizeMB} MB）`,
       };
+    }
+
+    case 'ingame_memory': {
+      const serverDir = path.resolve(config.mc?.serverDir || './mc-server');
+      const ingameMemoryDir = config.agent?.ingameMemoryDir
+        ? path.relative(serverDir, path.resolve(config.agent.ingameMemoryDir))
+        : 'ingame_memory';
+      const store = new IngameMemoryStore(serverDir, { ingameMemoryDir });
+      store.ensureStructure();
+
+      const action = args.action;
+      if (action === 'list_players') {
+        return store.listPlayers();
+      }
+
+      if (!callerPlayerName) {
+        return {
+          success: false,
+          error: '无法识别请求者身份，无法访问游戏内记忆。',
+        };
+      }
+
+      if (action === 'read_public') {
+        if (!args.targetPlayer) {
+          return { success: false, error: '缺少 targetPlayer 参数' };
+        }
+        return store.readPublic(args.targetPlayer, callerPlayerName);
+      }
+
+      if (action === 'read_private') {
+        return store.readPrivate(callerPlayerName);
+      }
+
+      if (action === 'write_public') {
+        if (!args.content) {
+          return { success: false, error: '缺少 content 参数' };
+        }
+        return store.writePublic(callerPlayerName, args.content, args.append !== false);
+      }
+
+      if (action === 'write_private') {
+        if (!args.content) {
+          return { success: false, error: '缺少 content 参数' };
+        }
+        return store.writePrivate(callerPlayerName, args.content, args.append !== false);
+      }
+
+      return { success: false, error: `未知的记忆操作: ${action}` };
     }
 
     default:

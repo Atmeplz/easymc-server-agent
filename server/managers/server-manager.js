@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
+const IngameMemoryStore = require('../agent/ingame-memory-store');
 
 // Standard ANSI escape sequence regex.
 const ANSI_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
@@ -17,10 +18,11 @@ const ANSI_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const READY_MARKERS = ['Done (', 'For help, type', 'Loading complete!'];
 
 class ServerManager {
-  constructor(config, javaManager, terminalManager) {
+  constructor(config, javaManager, terminalManager, pluginAutoDeployer = null) {
     this.config = config;
     this.javaManager = javaManager;
     this.terminalManager = terminalManager;
+    this.pluginAutoDeployer = pluginAutoDeployer;
     this.process = null;
     this.status = 'stopped'; // stopped | starting | running | stopping
     this.statusListeners = [];
@@ -45,6 +47,18 @@ class ServerManager {
     const javaPath = await this.resolveJavaPath();
 
     this.setStatus('starting');
+
+    // Deploy built-in plugins if the detected core supports them.
+    if (this.pluginAutoDeployer) {
+      try {
+        await this.pluginAutoDeployer.deployIfSupported();
+      } catch (error) {
+        console.error('[ServerManager] Plugin auto-deploy failed:', error.message);
+      }
+    }
+
+    // Archive stale ingame memory if the world appears to have been replaced.
+    this.archiveMemoryIfWorldReplaced();
 
     const args = [
       ...this.config.mc.jvmArgs,
@@ -114,6 +128,27 @@ class ServerManager {
           this.mcVersion = verMatch[1];
         }
       }
+    }
+  }
+
+  /**
+   * Archive ingame memory if the world folder appears to have been replaced.
+   */
+  archiveMemoryIfWorldReplaced() {
+    try {
+      const serverDir = this.serverDir;
+      const ingameMemoryDir = this.config.agent?.ingameMemoryDir
+        ? path.relative(serverDir, path.resolve(this.config.agent.ingameMemoryDir))
+        : 'ingame_memory';
+      const store = new IngameMemoryStore(serverDir, { ingameMemoryDir });
+      store.ensureStructure();
+      if (store.isWorldReplaced(this.config.mc?.worldName || 'world')) {
+        const result = store.archiveOldMemory();
+        console.log(`[ServerManager] World replaced; archived ingame memory to ${result.archivedTo}`);
+        this.terminalManager.addOutput(`[EasyMC] 检测到世界已更换，旧的游戏记忆已归档到 ${result.archivedTo}`);
+      }
+    } catch (error) {
+      console.error('[ServerManager] Failed to archive ingame memory:', error.message);
     }
   }
 

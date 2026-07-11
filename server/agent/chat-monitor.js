@@ -24,8 +24,10 @@ class ChatMonitor {
     this.config = config;
     this.serverManager = serverManager;
     this.chatRegex = new RegExp(config.agent?.chatRegex || '^<(\\w{1,16})>\\s+(.+)');
+    this.pmRegex = new RegExp(config.agent?.pmRegex || '^\\[AgentPM\\]\\s+(\\w{1,16})\\s+(.+)$');
     this.trigger = config.agent?.trigger || '@agent';
     this.replyPrefix = config.agent?.replyPrefix || '[Agent]';
+    this.privateMessageCommand = config.agent?.privateMessageCommand || '/agentpm';
     this.permissionManager = new PermissionManager(serverDir);
     this.listeners = [];
 
@@ -105,6 +107,17 @@ class ChatMonitor {
     // Drop the agent's own broadcasts to avoid infinite loops.
     if (this.isAgentReply(line)) return;
 
+    // Match private agent messages first: [AgentPM] playerName message
+    const pmBody = this.stripLogPrefix(line);
+    const pmMatch = pmBody.match(this.pmRegex);
+    if (pmMatch) {
+      const [, playerName, message] = pmMatch;
+      if (message) {
+        this.handleAgentRequest(playerName, message, true);
+      }
+      return;
+    }
+
     // Match player chat formats after the log prefix is removed.
     const body = this.stripLogPrefix(line);
     const match = body.match(this.chatRegex);
@@ -116,15 +129,18 @@ class ChatMonitor {
     if (message.trim().startsWith(this.trigger)) {
       const request = message.trim().slice(this.trigger.length).trim();
       if (request) {
-        this.handleAgentRequest(playerName, request);
+        this.handleAgentRequest(playerName, request, false);
       }
     }
   }
 
   /**
    * Handle an @agent request with cooldown and dedup guards.
+   * @param {string} playerName
+   * @param {string} request
+   * @param {boolean} isWhisper - whether the request came from /agentpm
    */
-  async handleAgentRequest(playerName, request) {
+  async handleAgentRequest(playerName, request, isWhisper = false) {
     const now = Date.now();
 
     // --- Per-player cooldown ---
@@ -163,28 +179,35 @@ class ChatMonitor {
       this.emit('agent:player_request', {
         player: playerName,
         request,
+        isWhisper,
         permission: permission.level,
         timestamp: Date.now(),
       });
 
-      console.log(`[ChatMonitor] @agent request: ${playerName} (OP${permission.level}): ${request}`);
+      console.log(`[ChatMonitor] ${isWhisper ? 'whisper' : '@agent'} request: ${playerName} (OP${permission.level}): ${request}`);
 
       // Hand the request to the Agent.
       const result = await this.agentCore.handlePlayerRequest(
-        playerName, request, permission
+        playerName, request, permission, isWhisper
       );
 
-      // Broadcast the Agent response to the server with /say.
+      // Deliver the Agent response.
       if (result.reply) {
-        const prefix = this.replyPrefix;
-        this.serverManager.sendCommand(`say ${prefix}: ${result.reply}`);
-        this.terminalManager.addOutput(`[Agent → ${playerName}] ${result.reply}`);
+        if (isWhisper) {
+          // Whispered requests get a private /tell reply.
+          this.serverManager.sendCommand(`tell ${playerName} ${this.replyPrefix}: ${result.reply}`);
+        } else {
+          const prefix = this.replyPrefix;
+          this.serverManager.sendCommand(`say ${prefix}: ${result.reply}`);
+        }
+        this.terminalManager.addOutput(`[Agent → ${playerName}${isWhisper ? ' (whisper)' : ''}] ${result.reply}`);
       }
 
       // Emit a concise stream event for the live @agent feed.
       this.emit('agent:player_reply', {
         player: playerName,
         request,
+        isWhisper,
         reply: result.reply,
         timestamp: Date.now(),
       });
@@ -193,6 +216,7 @@ class ChatMonitor {
       this.emit('agent:player_result', {
         player: playerName,
         request,
+        isWhisper,
         reply: result.reply,
         executed: result.executed,
         commands: result.commands,
