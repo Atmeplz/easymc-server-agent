@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
+const iconv = require('iconv-lite');
 const IngameMemoryStore = require('../agent/ingame-memory-store');
 
 // Standard ANSI escape sequence regex.
@@ -28,6 +29,9 @@ class ServerManager {
     this.statusListeners = [];
     this.serverDir = path.resolve(config.mc.serverDir);
     this.mcVersion = null;
+    this.encoding = 'utf-8';
+    this._stdoutReader = null;
+    this._stderrReader = null;
   }
 
   /**
@@ -73,28 +77,13 @@ class ServerManager {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const normalizeLine = (raw) => raw.toString().replace(ANSI_REGEX, '').replace(/\r$/, '');
-
-    // Handle stdout line-by-line for proper encoding and multi-byte safety.
-    const stdoutReader = readline.createInterface({ input: this.process.stdout });
-    stdoutReader.on('line', (raw) => {
-      const line = normalizeLine(raw);
-      this.terminalManager.addOutput(line);
-      this.detectServerReady(line);
-    });
-
-    // Handle stderr line-by-line.
-    const stderrReader = readline.createInterface({ input: this.process.stderr });
-    stderrReader.on('line', (raw) => {
-      const line = normalizeLine(raw);
-      this.terminalManager.addOutput(line);
-    });
+    this._setupTerminalStreams();
 
     // Clean up readline interfaces when the streams close.
-    stdoutReader.on('close', () => {
+    this._stdoutReader.on('close', () => {
       console.log('[ServerManager] stdout stream closed');
     });
-    stderrReader.on('close', () => {
+    this._stderrReader.on('close', () => {
       console.log('[ServerManager] stderr stream closed');
     });
 
@@ -113,6 +102,50 @@ class ServerManager {
       this.process = null;
       this.setStatus('stopped');
     });
+  }
+
+  /**
+   * Set up terminal streams with the current encoding.
+   * Pipes raw process stdout/stderr through iconv-lite decoder,
+   * then through readline for line-by-line processing.
+   */
+  _setupTerminalStreams() {
+    const normalizeLine = (raw) => raw.replace(ANSI_REGEX, '').replace(/\r$/, '');
+
+    const stdoutDecoder = iconv.decodeStream(this.encoding);
+    this.process.stdout.pipe(stdoutDecoder);
+    this._stdoutReader = readline.createInterface({ input: stdoutDecoder });
+    this._stdoutReader.on('line', (raw) => {
+      const line = normalizeLine(raw);
+      this.terminalManager.addOutput(line);
+      this.detectServerReady(line);
+    });
+
+    const stderrDecoder = iconv.decodeStream(this.encoding);
+    this.process.stderr.pipe(stderrDecoder);
+    this._stderrReader = readline.createInterface({ input: stderrDecoder });
+    this._stderrReader.on('line', (raw) => {
+      const line = normalizeLine(raw);
+      this.terminalManager.addOutput(line);
+    });
+  }
+
+  /**
+   * Change the terminal encoding dynamically.
+   * Closes existing readline interfaces and recreates them with the new encoding.
+   */
+  setEncoding(encoding) {
+    if (this.encoding === encoding || !this.process) return false;
+    this.encoding = encoding;
+    console.log(`[ServerManager] Terminal encoding changed to ${encoding}`);
+
+    // Close existing readline interfaces.
+    if (this._stdoutReader) this._stdoutReader.close();
+    if (this._stderrReader) this._stderrReader.close();
+
+    // Recreate with new encoding.
+    this._setupTerminalStreams();
+    return true;
   }
 
   /**
@@ -144,8 +177,12 @@ class ServerManager {
       store.ensureStructure();
       if (store.isWorldReplaced(this.config.mc?.worldName || 'world')) {
         const result = store.archiveOldMemory();
-        console.log(`[ServerManager] World replaced; archived ingame memory to ${result.archivedTo}`);
-        this.terminalManager.addOutput(`[EasyMC] 检测到世界已更换，旧的游戏记忆已归档到 ${result.archivedTo}`);
+        if (result.skipped) {
+          console.log('[ServerManager] World replaced but no player memory to archive.');
+        } else {
+          console.log(`[ServerManager] World replaced; archived ingame memory to ${result.archivedTo}`);
+          this.terminalManager.addOutput(`[EasyMC] 检测到世界已更换，旧的游戏记忆已归档到 ${result.archivedTo}`);
+        }
       }
     } catch (error) {
       console.error('[ServerManager] Failed to archive ingame memory:', error.message);

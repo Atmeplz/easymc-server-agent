@@ -12,3 +12,6 @@ UI_DESIGN_DRAFT_DONT_READ_WITHOUT_PERMISSION/
 .claude/
 .git/
 .playwright-mcp/
+.zcode/
+agent-pm-command/build/
+agent-pm-command/agent-pm-command.jar

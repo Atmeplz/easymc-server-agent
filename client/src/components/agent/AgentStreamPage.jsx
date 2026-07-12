@@ -1,23 +1,13 @@
-/*
- * AI maintenance note: Keep all code comments in English.
- */
 import { useEffect, useRef } from 'react';
 import { Bot, Radio } from 'lucide-react';
-
-function formatTime(timestamp) {
-  if (!timestamp) return '';
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
+import { formatTime } from '../../utils/format.js';
+import Avatar from '../ui/Avatar.jsx';
 
 export default function AgentStreamPage({
   messages,
   isTyping,
   isRunning,
   connected,
-  streamEndRef,
 }) {
   const containerRef = useRef(null);
 
@@ -125,16 +115,7 @@ export default function AgentStreamPage({
           </div>
         )}
 
-        <div ref={streamEndRef} />
       </div>
     </section>
-  );
-}
-
-function Avatar({ icon: Icon, className }) {
-  return (
-    <div className={`w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center text-md-onPrimaryContainer ${className}`}>
-      <Icon size={16} />
-    </div>
   );
 }

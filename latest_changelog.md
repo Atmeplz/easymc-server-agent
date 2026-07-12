@@ -1,8 +1,76 @@
 # Latest Changelog
 
-> Generated on 2026-07-11
+> Updated on 2026-07-12
 
-## ingame_memory 功能模块
+## App.jsx 拆分重构
+
+将 2838 行的 App.jsx 拆分为 595 行的 shell 组件，6 个页面域提取到独立文件。
+
+### 新增组件目录
+
+| 目录 | 组件 | 职责 |
+|---|---|---|
+| `components/agent/` | AgentStreamPage | Agent 实时活动流 |
+| `components/chat/` | ChatPage | AI 聊天界面 |
+| `components/console/` | ConsolePage | 服务器终端与控制 |
+| `components/download/` | DownloadCenterPage + 6 个子组件 | 下载中心 |
+| `components/resource/` | ResourcePage, ResourceCard | Mods/Plugins 管理 |
+| `components/setup/` | BasicSetupPage | 服务器基础设置 |
+| `components/ui/` | PageShell | 通用页面壳 |
+
+### 提取的 Hook 与工具
+
+- **`hooks/useDownloadQueue.js`**：下载队列状态管理
+- **`hooks/useAgentStream.js`**：Agent Stream 消息管理
+- **`utils/download.js`**：下载资源装饰器与工具函数
+- **`utils/format.js`**：格式化辅助函数
+- **`utils/fuzzySearch.js`**：模糊搜索算法
+- **`constants/app.js`**：全局常量定义
+
+### 删除的旧文件
+
+- `client/src/components/AgentStreamPage.jsx`（已迁入 `components/agent/`）
+- `client/src/components/DeployWizard.jsx`（功能合并入 ConsolePage）
+- `client/src/components/ModManager.jsx`（已迁入 `components/resource/`）
+- `client/src/components/PluginManager.jsx`（已迁入 `components/resource/`）
+- `client/src/components/ServerControls.jsx`（功能合并入 ConsolePage）
+- `client/src/components/SettingsModal.jsx`（已迁入 `components/setup/`）
+- `client/src/components/WorkspacePanel.jsx`（已移除）
+
+### 架构决策
+
+- **Props-down 模式**：App 持有 Socket + 状态中枢，子组件纯 props
+- **Socket 事件集中注册**：master useEffect 在 App 中统一注册 15+ 事件监听器
+- **6 个孤儿文件清理**：所有已拆分组件的原文件已删除
+
+---
+
+## Bug 修复（2026-07-12）
+
+| Bug | 修复内容 |
+|------|----------|
+| Download 文件列表不刷新 | 切换资源时立即清空旧 files，等待新请求完成 |
+| ingame_memory 归档路径 undefined | `archiveOldMemory()` 返回 `skipped: true` 时不再输出 undefined |
+| agent-pm-command.jar ClassNotFoundException | JAR 重新编译，修复 package 目录结构和 plugin.yml 版本占位符 |
+| `streamEndRef` 死代码 | 从 App.jsx 和 AgentStreamPage 中完全移除 |
+
+---
+
+## 终端编码热切换（iconv-lite）
+
+新增前端终端编码选择器（GB2312/UTF-8/GBK 等），支持运行时切换编码。
+
+- **前端**：App.jsx useEffect 监听 `terminalEncoding` 变化，emit `terminal:encoding`
+- **后端 `server/index.js`**：新增 `terminal:encoding` Socket handler，调用 `serverManager.setEncoding()`，成功后重发 terminal history
+- **后端 `server-manager.js`**：
+  - 新增 `_setupTerminalStreams()` 方法：iconv-lite 解码流 + readline 封装为独立方法
+  - 新增 `setEncoding(encoding)` 方法：关闭旧 reader、重建新解码流，返回 boolean
+  - 新增依赖 `iconv-lite`
+- **agent-pm-command/pom.xml**：新增 `<resources>` 配置启用 Maven resource filtering（为未来 Maven 构建准备）
+
+---
+
+## ingame_memory 功能模块（2026-07-11）
 
 新增游戏内记忆系统，支持 AI Agent 持久化玩家偏好、坐标、秘密等信息，并区分公开/私有记忆等级。
 

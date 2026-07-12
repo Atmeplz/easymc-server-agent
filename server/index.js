@@ -204,6 +204,14 @@ io.on('connection', (socket) => {
     serverManager.sendCommand(command);
   });
 
+  socket.on('terminal:encoding', ({ encoding }) => {
+    const changed = serverManager.setEncoding(encoding);
+    if (changed) {
+      // Re-emit terminal history with new encoding so the UI refreshes.
+      socket.emit('terminal:history', { lines: terminalManager.getHistory() });
+    }
+  });
+
   socket.on('app:shutdown', async () => {
     console.log('[App] Shutdown requested.');
     io.emit('app:shutting_down', { message: 'EasyMC Server Agent is shutting down...' });

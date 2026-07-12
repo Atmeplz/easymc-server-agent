@@ -1,5 +1,5 @@
 name: AgentPM
-version: '${project.version}'
+version: '1.0.0'
 main: com.easymc.agentpm.AgentPMPlugin
 api-version: '1.16'
 authors: [EasyMC]
